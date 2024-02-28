@@ -2,10 +2,10 @@
 #!/bin/bash
 
 # The name of the directory to be compressed
-DIRECTORY="projects"
+DIRECTORY="/home/kdlocpanda/personal"
 
 # The desired name of the tarball
-TARBALL_NAME="projects_backup.tar.gz"
+TARBALL_NAME="personal_1_14_24.tar.gz"
 
 # The path to the My Passport SSD mount location (assuming the default mount point)
 # Josh will need to replace '/media/yourusername' with his actual path, which typically includes the username
