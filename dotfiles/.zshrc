@@ -238,6 +238,4 @@ export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
 
 
 
-# Load custom aliases
-if [ -f "/home/kdlocpanda/.config/fabric/fabric-bootstrap.inc" ]; then . "/home/kdlocpanda/.config/fabric/fabric-bootstrap.inc"; fi
 
