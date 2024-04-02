@@ -110,13 +110,7 @@ alias lt="colorls --tree=3"
     echo "Switched to Personal SSH and Git Config."
   }
 
-  gitea() {
-    ssh-add -D
-    ssh-add ~/.ssh/id_ed25519_gitea
-    git config --global user.email "joshua.yorko@gmail.com"
-    git config --global user.name "kdlocpanda"
-    echo "Switched to Personal SSH and Git Config."
-  }
+
 
   work() {
     ssh-add -D
@@ -204,38 +198,5 @@ llm() {
     bash "$ggufs_dir/llamafile-0.6.2" -m "$model_file" --server --host "0.0.0.0" -ngl 7
     echo "Server setup completed for model: $model_name"
 }
-
-
-
-
-
-
-# >>> conda initialize >>>
-# !! Contents within this block are managed by 'conda init' !!
-__conda_setup="$('/home/kdlocpanda/miniconda3/bin/conda' 'shell.zsh' 'hook' 2> /dev/null)"
-if [ $? -eq 0 ]; then
-    eval "$__conda_setup"
-else
-    if [ -f "/home/kdlocpanda/miniconda3/etc/profile.d/conda.sh" ]; then
-        . "/home/kdlocpanda/miniconda3/etc/profile.d/conda.sh"
-    else
-        export PATH="/home/kdlocpanda/miniconda3/bin:$PATH"
-    fi
-fi
-unset __conda_setup
-# <<< conda initialize <<<
-export PATH="$PATH:/home/kdlocpanda/chrome-linux64"
-
-# The next line updates PATH for the Google Cloud SDK.
-if [ -f '/home/kdlocpanda/google-cloud-sdk/path.zsh.inc' ]; then . '/home/kdlocpanda/google-cloud-sdk/path.zsh.inc'; fi
-
-# The next line enables shell command completion for gcloud.
-if [ -f '/home/kdlocpanda/google-cloud-sdk/completion.zsh.inc' ]; then . '/home/kdlocpanda/google-cloud-sdk/completion.zsh.inc'; fi
-
-export PATH=/usr/local/cuda-12.3/bin${PATH:+:${PATH}}
-export LD_LIBRARY_PATH=/usr/local/cuda-12.3/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
-export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
-
-
 
 
