@@ -105,11 +105,68 @@ alias ll="colorls -al"
 alias lt="colorls --tree=3"
   personal() {
     ssh-add -D
-    ssh-add ~/.ssh/id_ed25519_personal
+    ssh-add ~/.ssh/id_ed25519
     git config --global user.email "joshua.yorko@gmail.com"
     echo "Switched to Personal SSH and Git Config."
   }
+alias nvim="lvim"
 
+conda_destroy() {
+  envs_to_delete=$(conda env list | grep -v "^#" | grep -v "base" | awk '{print $1}')
+  if [ -z "$envs_to_delete" ]; then
+    echo "🔍 Only the 'base' Conda environment found. No environments to destroy! 🏡"
+  else
+    echo "$envs_to_delete" | while read -r env; do
+      if [ ! -z "$env" ]; then
+        conda env remove -n "$env" -y
+        echo "🚀 Environment '$env' destroyed! 💥"
+      fi
+    done
+    echo "🌌 All non-base Conda environments have been annihilated! 🌠"
+  fi
+}
+
+generate_class_prompt() {
+  echo "Enter the objective of the class:"
+  read objective
+
+  echo "How many functions does your class need (excluding __init__)?"
+  read num_funcs
+
+  prompt="Create a Python class that enables ${objective}. I need the following FUNCTION support:\n\nFUNCTION\n\n__init__()"
+
+  for ((i = 1; i <= num_funcs; i++))
+  do
+    echo "Enter name for function $i:"
+    read func_name
+
+    echo "Does function $i have parameters? [y/n]"
+    read has_params
+
+    func_def="$func_name"
+
+    if [[ $has_params == "y" ]]; then
+      echo "Enter parameter(s) for $func_name, comma-separated if multiple:"
+      read params
+      func_def="${func_def}(${params})"
+    else
+      func_def="${func_def}()"
+    fi
+
+    echo "Do you want to add a description for $func_name? [y/n]"
+    read has_desc
+
+    if [[ $has_desc == "y" ]]; then
+      echo "Enter description for $func_name:"
+      read desc
+      func_def="${func_def} - $desc"
+    fi
+
+    prompt="${prompt}\n${func_def}"
+  done
+
+  echo -e "\n${prompt}"
+}
 
 
   work() {
@@ -120,6 +177,42 @@ alias lt="colorls --tree=3"
     git config --global user.email "joshua.yorko@gainwelltechnologies.com"
     echo "Switched to Work SSH and Git Config."
   }
+# APPLICATIONS
+#
+#
+compress() {
+    # Prompt for directory to compress
+    echo -n "Enter the directory to compress: "
+    read directory
+    if [ ! -d "$directory" ]; then
+        echo "Directory does not exist."
+        return 1
+    fi
+
+    # Prompt for tarball name
+    echo -n "Enter the name for the tarball (e.g., backup.tar.gz): "
+    read tarball_name
+    # Check if pigz is installed, if not, fall back to gzip
+    if command -v pigz >/dev/null 2>&1; then
+        echo "pigz found, using pigz for compression."
+        compressor="pigz"
+    else
+        compressor="gzip"
+        echo "pigz not found, using gzip instead."
+    fi
+
+    # Compress the directory using tar with the chosen compressor
+    tar -I $compressor -cvf "${tarball_name}" "$directory" 2> /tmp/tar_errors.log | pv -lep -s $(find "$directory" -type f | wc -l) > /dev/null
+
+    # Check if the compression was successful
+    if [ $? -eq 0 ]; then
+        echo "Directory compressed successfully."
+    else
+        echo "Failed to compress the directory. Check the directory name and try again."
+        echo "Refer to /tmp/tar_errors.log for errors."
+    fi
+}
+
 
  edir() {
     local search_term=$1
@@ -163,40 +256,41 @@ alias lt="colorls --tree=3"
         echo "🚫 No directory selected."
     fi
 }
-  export PATH=/home/kdlocpanda/.local/bin:$PATH
-  export PATH=/home/kdlocpanda/.cargo/bin:$PATH
 
 
-MODEL_DIR="/home/kdlocpanda/personal/models/ggufs"
-llm() {
-    local ggufs_dir="/home/kdlocpanda/personal/models/ggufs" # Ensure this is the correct path to your ggufs directory
-    local model_file=""
 
-    # If no arguments, use fzf to select a model file
-    if [[ $# -eq 0 ]]; then
-        echo "Select a model:"
-        model_file=$(find "$ggufs_dir" -name '*.gguf' | fzf --height 40% --reverse)
 
-        # Exit if no file is selected
-        if [[ -z "$model_file" ]]; then
-            echo "No model selected. Exiting."
-            return 1
-        fi
+export PATH="$PATH:/home/kdlocpanda/chrome-linux64"
+
+# The next line updates PATH for the Google Cloud SDK.
+if [ -f '/home/kdlocpanda/google-cloud-sdk/path.zsh.inc' ]; then . '/home/kdlocpanda/google-cloud-sdk/path.zsh.inc'; fi
+
+# The next line enables shell command completion for gcloud.
+if [ -f '/home/kdlocpanda/google-cloud-sdk/completion.zsh.inc' ]; then . '/home/kdlocpanda/google-cloud-sdk/completion.zsh.inc'; fi
+
+export PATH=/usr/local/cuda-12.3/bin${PATH:+:${PATH}}
+export LD_LIBRARY_PATH=/usr/local/cuda-12.3/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
+export PATH=/home/kdlocpanda/.local/bin:$PATH
+export PATH=/home/kdlocpanda/.cargo/bin:$PATH
+
+
+# Load custom aliases
+if [ -f "/home/kdlocpanda/.config/fabric/fabric-bootstrap.inc" ]; then . "/home/kdlocpanda/.config/fabric/fabric-bootstrap.inc"; fi
+
+# >>> conda initialize >>>
+# !! Contents within this block are managed by 'conda init' !!
+__conda_setup="$('/home/kdlocpanda/miniconda3/bin/conda' 'shell.zsh' 'hook' 2> /dev/null)"
+if [ $? -eq 0 ]; then
+    eval "$__conda_setup"
+else
+    if [ -f "/home/kdlocpanda/miniconda3/etc/profile.d/conda.sh" ]; then
+        . "/home/kdlocpanda/miniconda3/etc/profile.d/conda.sh"
     else
-        # If an argument is provided (for backward compatibility or direct invocation)
-        model_file="$ggufs_dir/$1.gguf"
-        if [[ ! -f "$model_file" ]]; then
-            echo "Model file does not exist: $1"
-            return 1
-        fi
+        export PATH="/home/kdlocpanda/miniconda3/bin:$PATH"
     fi
-
-    # Extract the model name for display purposes
-    local model_name=$(basename "$model_file" .gguf)
-
-    echo "Setting up server for model: $model_name"
-    bash "$ggufs_dir/llamafile-0.6.2" -m "$model_file" --server --host "0.0.0.0" -ngl 7
-    echo "Server setup completed for model: $model_name"
-}
+fi
+unset __conda_setup
+# <<< conda initialize <<<
 
 
