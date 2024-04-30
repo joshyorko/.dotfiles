@@ -100,16 +100,96 @@ source $ZSH/oh-my-zsh.sh
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 
-alias ls="colorls"
-alias ll="colorls -al"
-alias lt="colorls --tree=3"
+#alias ls="colorls"
+#alias ll="colorls -al"
+#alias lt="colorls --tree=3"
   personal() {
     ssh-add -D
     ssh-add ~/.ssh/id_ed25519
     git config --global user.email "joshua.yorko@gmail.com"
     echo "Switched to Personal SSH and Git Config."
   }
-alias nvim="lvim"
+
+work() {
+    ssh-add -D
+    ssh-add ~/.ssh/id_ed25519_work
+    export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_work -F /dev/null"
+    git config --global user.email "joshua.yorko@gainwelltechnologies.com"
+    echo "Switched to Work SSH and Git Config."
+}
+
+conda_snapshot() {
+  local snapshot_dir="${1:-$HOME/conda_snapshots}"
+  mkdir -p "$snapshot_dir"
+  conda env list | grep -v "^#" | awk '{print $1}' | while read -r env; do
+    if [ ! -z "$env" ]; then
+      echo "📸 Taking snapshot of '$env' environment..."
+      conda list -n "$env" --explicit > "$snapshot_dir/$env.txt"
+      echo "🗃️ Snapshot saved to '$snapshot_dir/$env.txt'"
+    fi
+  done
+  echo "🌠 All Conda environment snapshots are saved in '$snapshot_dir'!"
+}
+
+
+
+conda_build_interactive() {
+  echo "🔧 Let's build a new Conda environment."
+  echo "Enter the name for your new environment: "
+  read env_name
+
+  # Get available Python versions dynamically
+  echo "Fetching available Python versions..."
+  python_versions=$(conda search "^python$" | grep "python" | awk '{print $2}' | sort -V | uniq)
+
+  # Display Python versions in a compact table format
+  echo "Available Python Versions:"
+  version_array=(${(f)python_versions}) # Split into an array by newlines
+  for i in {1..$#version_array}; do
+    echo "$i) ${version_array[i]}"
+  done
+
+  echo "Select Python version by index number (e.g., 82 for Python 3.11.0): "
+  read py_index
+  py_version="python=${version_array[$py_index]}"
+
+  echo "Would you like to install packages using Conda or pip? (Enter 'conda' or 'pip')"
+  read package_manager
+
+  # Prompt for package selection
+  echo "Enter package names separated by spaces to search (e.g., numpy scipy): "
+  read -A package_list
+
+  echo "Creating environment '$env_name' with Python version '$py_version'..."
+  conda create --name "$env_name" "$py_version" -y
+
+  echo "Activating environment '$env_name'..."
+  eval "$(conda shell.zsh hook)"
+  conda activate "$env_name"
+
+  if [[ "$package_manager" == "conda" ]]; then
+    for package in $package_list; do
+      echo "Attempting to install $package using Conda..."
+      if ! conda install "$package" -y; then
+        echo "$package not found in Conda repositories. Attempting to install with pip."
+        pip cache purge
+        pip install --no-cache-dir "$package"
+      fi
+    done
+  elif [[ "$package_manager" == "pip" ]]; then
+    echo "Installing packages using pip: ${package_list[*]}"
+    echo "Clearing pip cache..."
+    pip cache purge
+    pip install  --no-cache-dir ${package_list[@]}
+  fi
+
+  echo "🚀 Environment '$env_name' created and packages installed successfully."
+  echo "✨ Conda environment setup is complete! Use 'conda activate $env_name' to start using it."
+}
+
+
+
+
 
 conda_destroy() {
   envs_to_delete=$(conda env list | grep -v "^#" | grep -v "base" | awk '{print $1}')
@@ -257,40 +337,5 @@ compress() {
     fi
 }
 
-
-
-
-export PATH="$PATH:/home/kdlocpanda/chrome-linux64"
-
-# The next line updates PATH for the Google Cloud SDK.
-if [ -f '/home/kdlocpanda/google-cloud-sdk/path.zsh.inc' ]; then . '/home/kdlocpanda/google-cloud-sdk/path.zsh.inc'; fi
-
-# The next line enables shell command completion for gcloud.
-if [ -f '/home/kdlocpanda/google-cloud-sdk/completion.zsh.inc' ]; then . '/home/kdlocpanda/google-cloud-sdk/completion.zsh.inc'; fi
-
-export PATH=/usr/local/cuda-12.3/bin${PATH:+:${PATH}}
-export LD_LIBRARY_PATH=/usr/local/cuda-12.3/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
-export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
-export PATH=/home/kdlocpanda/.local/bin:$PATH
-export PATH=/home/kdlocpanda/.cargo/bin:$PATH
-
-
-# Load custom aliases
-if [ -f "/home/kdlocpanda/.config/fabric/fabric-bootstrap.inc" ]; then . "/home/kdlocpanda/.config/fabric/fabric-bootstrap.inc"; fi
-
-# >>> conda initialize >>>
-# !! Contents within this block are managed by 'conda init' !!
-__conda_setup="$('/home/kdlocpanda/miniconda3/bin/conda' 'shell.zsh' 'hook' 2> /dev/null)"
-if [ $? -eq 0 ]; then
-    eval "$__conda_setup"
-else
-    if [ -f "/home/kdlocpanda/miniconda3/etc/profile.d/conda.sh" ]; then
-        . "/home/kdlocpanda/miniconda3/etc/profile.d/conda.sh"
-    else
-        export PATH="/home/kdlocpanda/miniconda3/bin:$PATH"
-    fi
-fi
-unset __conda_setup
-# <<< conda initialize <<<
 
 
