@@ -294,7 +294,7 @@ compress() {
 }
 
 
- edir() {
+edir() {
     local search_term=$1
     local editor_option=$2
 
@@ -304,24 +304,20 @@ compress() {
         return 1
     fi
 
-    # Check for required tools: fzf and find
+    # Ensure fzf is installed
     if ! command -v fzf >/dev/null 2>&1; then
-        echo "❌ Install 'fzf'."
+        echo "❌ 'fzf' is not installed. Please install it first."
         return 1
     fi
 
-    if ! command -v find >/dev/null 2>&1; then
-        echo "❌ Install 'find'."
-        return 1
-    fi
-
-    # Find directories matching the search term and select one using fzf
-    local selected_dir=$(find --type d --ignore-file ~/.ignore "$search_term" 2>/dev/null | fzf --prompt="Select a directory: ")
+    # Use find dynamically from the home directory
+    local selected_dir
+    selected_dir=$(find ~ -type d -iname "*$search_term*" 2>/dev/null | fzf --prompt="Select a directory: ")
 
     # Check if a directory was selected
     if [ -n "$selected_dir" ]; then
         case $editor_option in
-            -c) 
+            -c)
                 if command -v code >/dev/null 2>&1; then
                     code "$selected_dir"
                 else
@@ -329,8 +325,16 @@ compress() {
                     return 1
                 fi
                 ;;
-            -o) cd "$selected_dir" ;;  # Only change to the selected directory
-            *) nvim "$selected_dir" ;;  # Default to nvim if no option or unrecognized option is given
+            -o)
+                cd "$selected_dir" || return 1
+                ;;
+            *)
+                if command -v nvim >/dev/null 2>&1; then
+                    nvim "$selected_dir"
+                else
+                    vim "$selected_dir"
+                fi
+                ;;
         esac
     else
         echo "🚫 No directory selected."
