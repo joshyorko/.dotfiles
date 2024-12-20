@@ -304,19 +304,19 @@ compress() {
         return 1
     fi
 
-    # Check for required tools: fzf and fd
+    # Check for required tools: fzf and find
     if ! command -v fzf >/dev/null 2>&1; then
         echo "❌ Install 'fzf'."
         return 1
     fi
 
-    if ! command -v fd >/dev/null 2>&1; then
-        echo "❌ Install 'fd'."
+    if ! command -v find >/dev/null 2>&1; then
+        echo "❌ Install 'find'."
         return 1
     fi
 
     # Find directories matching the search term and select one using fzf
-    local selected_dir=$(fd --type d --ignore-file ~/.ignore "$search_term" ~ ~/projects 2>/dev/null | fzf --prompt="Select a directory: ")
+    local selected_dir=$(find --type d --ignore-file ~/.ignore "$search_term" 2>/dev/null | fzf --prompt="Select a directory: ")
 
     # Check if a directory was selected
     if [ -n "$selected_dir" ]; then
@@ -336,6 +336,3 @@ compress() {
         echo "🚫 No directory selected."
     fi
 }
-
-
-
