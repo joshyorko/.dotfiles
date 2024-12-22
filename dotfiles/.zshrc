@@ -70,7 +70,7 @@ ZSH_THEME="robbyrussell"
 # Custom plugins may be added to $ZSH_CUSTOM/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(ansible git python zsh-autosuggestions zsh-syntax-highlighting)
+plugins=(ansible git python zsh-autosuggestions zsh-syntax-highlighting kubectl)
 
 source $ZSH/oh-my-zsh.sh
 
@@ -103,12 +103,12 @@ source $ZSH/oh-my-zsh.sh
 #alias ls="colorls"
 #alias ll="colorls -al"
 #alias lt="colorls --tree=3"
-  personal() {
+personal() {
     ssh-add -D
     ssh-add ~/.ssh/id_ed25519
     git config --global user.email "joshua.yorko@gmail.com"
     echo "Switched to Personal SSH and Git Config."
-  }
+}
 
 work() {
     ssh-add -D
@@ -206,47 +206,6 @@ conda_destroy() {
   fi
 }
 
-generate_class_prompt() {
-  echo "Enter the objective of the class:"
-  read objective
-
-  echo "How many functions does your class need (excluding __init__)?"
-  read num_funcs
-
-  prompt="Create a Python class that enables ${objective}. I need the following FUNCTION support:\n\nFUNCTION\n\n__init__()"
-
-  for ((i = 1; i <= num_funcs; i++))
-  do
-    echo "Enter name for function $i:"
-    read func_name
-
-    echo "Does function $i have parameters? [y/n]"
-    read has_params
-
-    func_def="$func_name"
-
-    if [[ $has_params == "y" ]]; then
-      echo "Enter parameter(s) for $func_name, comma-separated if multiple:"
-      read params
-      func_def="${func_def}(${params})"
-    else
-      func_def="${func_def}()"
-    fi
-
-    echo "Do you want to add a description for $func_name? [y/n]"
-    read has_desc
-
-    if [[ $has_desc == "y" ]]; then
-      echo "Enter description for $func_name:"
-      read desc
-      func_def="${func_def} - $desc"
-    fi
-
-    prompt="${prompt}\n${func_def}"
-  done
-
-  echo -e "\n${prompt}"
-}
 
 
   work() {
@@ -295,24 +254,46 @@ compress() {
 
 
 edir() {
-    local search_term=$1
-    local editor_option=$2
-
-    # Check if a search term is provided
-    if [ -z "$search_term" ]; then
-        echo "❌ Provide a search term."
-        return 1
-    fi
+    local editor_option=$1
 
     # Ensure fzf is installed
     if ! command -v fzf >/dev/null 2>&1; then
-        echo "❌ 'fzf' is not installed. Please install it first."
-        return 1
+        echo "❌ 'fzf' is not installed. Installing..."
+        if command -v apt >/dev/null 2>&1; then
+            sudo apt update && sudo apt install -y fzf
+        elif command -v brew >/dev/null 2>&1; then
+            brew install fzf
+        elif command -v cargo >/dev/null 2>&1; then
+            cargo install fzf
+        else
+            echo "⚠️ Unable to install 'fzf'. Please install it manually."
+            return 1
+        fi
     fi
 
-    # Use find dynamically from the home directory
+    # Ensure fd is installed
+    if ! command -v fd >/dev/null 2>&1; then
+        echo "❌ 'fd' is not installed. Installing..."
+        if command -v apt >/dev/null 2>&1; then
+            sudo apt update && sudo apt install -y fd-find
+            # Link fdfind to fd for convenience
+            if ! [ -x "$(command -v fd)" ]; then
+                ln -s $(which fdfind) ~/.local/bin/fd
+                echo "Linked 'fdfind' to 'fd'."
+            fi
+        elif command -v brew >/dev/null 2>&1; then
+            brew install fd
+        elif command -v cargo >/dev/null 2>&1; then
+            cargo install fd-find
+        else
+            echo "⚠️ Unable to install 'fd'. Please install it manually."
+            return 1
+        fi
+    fi
+
+    # Use fd to search for directories and fzf to select one
     local selected_dir
-    selected_dir=$(find ~ -type d -iname "*$search_term*" 2>/dev/null | fzf --prompt="Select a directory: ")
+    selected_dir=$(fd . --type d ~ 2>/dev/null | fzf --prompt="Select a directory: ")
 
     # Check if a directory was selected
     if [ -n "$selected_dir" ]; then
@@ -325,18 +306,11 @@ edir() {
                     return 1
                 fi
                 ;;
-            -o)
-                cd "$selected_dir" || return 1
-                ;;
-            *)
-                if command -v nvim >/dev/null 2>&1; then
-                    nvim "$selected_dir"
-                else
-                    vim "$selected_dir"
-                fi
-                ;;
+            -n) nvim "$selected_dir" ;;  # Open in nvim if -n option is provided
+            *) cd "$selected_dir" ;;     # Default behavior: change to the selected directory
         esac
     else
         echo "🚫 No directory selected."
     fi
 }
+
