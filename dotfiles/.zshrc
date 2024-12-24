@@ -291,9 +291,11 @@ edir() {
         fi
     fi
 
-    # Use fd to search for directories and fzf to select one
+    # Use fd to search multiple directories
     local selected_dir
-    selected_dir=$(fd . --type d ~ 2>/dev/null | fzf --prompt="Select a directory: ")
+    selected_dir=$(
+        { fd . --type d /home 2>/dev/null; fd . --type d /workspaces 2>/dev/null; } | fzf --prompt="Select a directory: "
+    )
 
     # Check if a directory was selected
     if [ -n "$selected_dir" ]; then
