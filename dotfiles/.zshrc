@@ -103,20 +103,7 @@ source $ZSH/oh-my-zsh.sh
 #alias ls="colorls"
 #alias ll="colorls -al"
 #alias lt="colorls --tree=3"
-personal() {
-    ssh-add -D
-    ssh-add ~/.ssh/id_ed25519
-    git config --global user.email "joshua.yorko@gmail.com"
-    echo "Switched to Personal SSH and Git Config."
-}
 
-work() {
-    ssh-add -D
-    ssh-add ~/.ssh/id_ed25519_work
-    export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_work -F /dev/null"
-    git config --global user.email "joshua.yorko@gainwelltechnologies.com"
-    echo "Switched to Work SSH and Git Config."
-}
 
 conda_snapshot() {
   local snapshot_dir="${1:-$HOME/conda_snapshots}"
@@ -208,14 +195,7 @@ conda_destroy() {
 
 
 
-  work() {
-    ssh-add -D
-    ssh-add ~/.ssh/id_ed25519_work
-  
-    git config --global user.name "Josh Yorko"
-    git config --global user.email "joshua.yorko@gainwelltechnologies.com"
-    echo "Switched to Work SSH and Git Config."
-  }
+
 # APPLICATIONS
 #
 #
