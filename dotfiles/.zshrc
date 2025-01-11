@@ -236,8 +236,22 @@ compress() {
 edir() {
     local editor_option=$1
 
-    # Ensure fzf is installed
+    # Check if tools are in PATH first
+    local needs_fzf=0
+    local needs_fd=0
+
+    # Check for fzf in PATH
     if ! command -v fzf >/dev/null 2>&1; then
+        needs_fzf=1
+    fi
+
+    # Check for fd/fdfind in PATH
+    if ! (command -v fd >/dev/null 2>&1 || command -v fdfind >/dev/null 2>&1); then
+        needs_fd=1
+    fi
+
+    # Install only if needed
+    if [ $needs_fzf -eq 1 ]; then
         echo "❌ 'fzf' is not installed. Installing..."
         if command -v apt >/dev/null 2>&1; then
             sudo apt update && sudo apt install -y fzf
@@ -251,14 +265,15 @@ edir() {
         fi
     fi
 
-    # Ensure fd is installed
-    if ! command -v fd >/dev/null 2>&1; then
+    if [ $needs_fd -eq 1 ]; then
         echo "❌ 'fd' is not installed. Installing..."
         if command -v apt >/dev/null 2>&1; then
             sudo apt update && sudo apt install -y fd-find
-            # Link fdfind to fd for convenience
-            if ! [ -x "$(command -v fd)" ]; then
+            # Link fdfind to fd only if fd doesn't exist
+            if command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
+                mkdir -p ~/.local/bin
                 ln -s $(which fdfind) ~/.local/bin/fd
+                export PATH="$HOME/.local/bin:$PATH"
                 echo "Linked 'fdfind' to 'fd'."
             fi
         elif command -v brew >/dev/null 2>&1; then
@@ -271,10 +286,18 @@ edir() {
         fi
     fi
 
-    # Use fd to search the current directory, /home, and /workspaces
+    # Use fd or fdfind (whichever is available)
+    local fd_cmd
+    if command -v fd >/dev/null 2>&1; then
+        fd_cmd="fd"
+    else
+        fd_cmd="fdfind"
+    fi
+
+    # Use fd to search directories
     local selected_dir
     selected_dir=$(
-        { fd . --type d "$PWD" 2>/dev/null; fd . --type d /home 2>/dev/null; fd . --type d /workspaces 2>/dev/null; } |
+        { $fd_cmd . --type d "$PWD" 2>/dev/null; $fd_cmd . --type d /home 2>/dev/null; $fd_cmd . --type d /workspaces 2>/dev/null; } |
         fzf --prompt="Select a directory: "
     )
 
@@ -296,4 +319,3 @@ edir() {
         echo "🚫 No directory selected."
     fi
 }
-
