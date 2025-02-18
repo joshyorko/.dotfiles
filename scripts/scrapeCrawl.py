@@ -270,7 +270,8 @@ def crawl(
     links: bool = typer.Option(False, "--links", help="Extract links from the page"),
     alldata: bool = typer.Option(False, "--alldata", help="Output full JSON result"),
     headless: bool = typer.Option(True, "--headless/--no-headless", help="Run browser in headless mode"),
-    debug: bool = typer.Option(False, "--debug", help="Print full raw result (truncated)")
+    debug: bool = typer.Option(False, "--debug", help="Print full raw result (truncated)"),
+    magic: bool = typer.Option(False, "--magic", help="Enables Magic Browser Mode!.")
 ):
     """
     Crawl the given URL using the Crawl4AI Python API.
@@ -295,7 +296,8 @@ def crawl(
             screenshot=screenshot,
             screenshot_wait_for=screenshot_wait_for,
             wait_for_images=wait_for_images,
-            verbose=True
+            verbose=True,
+            magic = magic
         )
         async with AsyncWebCrawler(config=browser_config,extract_links=links) as crawler:
             result = await crawler.arun(url, config=run_config)
