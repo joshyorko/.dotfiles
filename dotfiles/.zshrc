@@ -350,5 +350,13 @@ cn() {
 
 
 crawl() {
-    python /home/kdlocpanda/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py "$@"
+  if [ -f "/home/kdlocpanda/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py" ]; then
+    uv run /home/kdlocpanda/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py "$@"
+  elif [ -f "/home/codespace/scrapeCrawl.py" ]; then
+    uv run /home/codespace/scrapeCrawl.py "$@"
+  else
+    echo "Error: scrapeCrawl.py not found in either /home/kdlocpanda/yorko_io/all_the_docks/ai_flow/ or /home/codespace/"
+    return 1
+  fi
 }
+
