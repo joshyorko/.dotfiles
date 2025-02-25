@@ -354,9 +354,11 @@ crawl() {
     uv run /home/kdlocpanda/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py "$@"
   elif [ -f "/home/codespace/scrapeCrawl.py" ]; then
     uv run /home/codespace/scrapeCrawl.py "$@"
+  # check .dotfiles scripts/ directory
+  elif [ -f "$HOME/.dotfiles/scripts/scrapeCrawl.py" ]; then
+    uv run "$HOME/.dotfiles/scripts/scrapeCrawl.py" "$@"
   else
     echo "Error: scrapeCrawl.py not found in either /home/kdlocpanda/yorko_io/all_the_docks/ai_flow/ or /home/codespace/"
     return 1
   fi
 }
-
