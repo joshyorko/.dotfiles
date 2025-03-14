@@ -121,6 +121,43 @@ conda_snapshot() {
 
 
 conda_build_interactive() {
+  # Check if conda is installed
+  if ! command -v conda &> /dev/null; then
+    echo "🔍 Conda not found. Installing Miniconda..."
+    
+    # Detect OS
+    case "$(uname -s)" in
+      Linux*)
+        installer_url="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+        ;;
+      Darwin*)
+        if [[ $(uname -m) == "arm64" ]]; then
+          installer_url="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh"
+        else
+          installer_url="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh"
+        fi
+        ;;
+      *)
+        echo "❌ Unsupported operating system"
+        return 1
+        ;;
+    esac
+
+    # Download and install Miniconda
+    wget "$installer_url" -O miniconda.sh || curl -o miniconda.sh "$installer_url"
+    bash miniconda.sh -b -p "$HOME/miniconda"
+    rm miniconda.sh
+
+    # Initialize conda for the current shell
+    eval "$("$HOME/miniconda/bin/conda" "shell.$(basename "$SHELL")" hook)"
+
+    # Add conda to PATH permanently
+    echo 'export PATH="$HOME/miniconda/bin:$PATH"' >> "$HOME/.$(basename "$SHELL")rc"
+    
+    echo "✅ Conda installed successfully!"
+  fi
+
+  # Existing conda_build_interactive function continues here
   echo "🔧 Let's build a new Conda environment."
   echo "Enter the name for your new environment: "
   read env_name
@@ -350,15 +387,14 @@ cn() {
 
 
 crawl() {
-  if [ -f "/home/kdlocpanda/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py" ]; then
-    uv run /home/kdlocpanda/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py "$@"
-  elif [ -f "/home/codespace/scrapeCrawl.py" ]; then
-    uv run /home/codespace/scrapeCrawl.py "$@"
-  # check .dotfiles scripts/ directory
+  if [ -f "$HOME/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py" ]; then
+    uv run "$HOME/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py" "$@"
+  elif [ -f "$HOME/scrapeCrawl.py" ]; then
+    uv run "$HOME/scrapeCrawl.py" "$@"
   elif [ -f "$HOME/.dotfiles/scripts/scrapeCrawl.py" ]; then
     uv run "$HOME/.dotfiles/scripts/scrapeCrawl.py" "$@"
   else
-    echo "Error: scrapeCrawl.py not found in either /home/kdlocpanda/yorko_io/all_the_docks/ai_flow/ or /home/codespace/"
+    echo "Error: scrapeCrawl.py not found in $HOME/yorko_io/all_the_docks/ai_flow/, $HOME/, or $HOME/.dotfiles/scripts/"
     return 1
   fi
 }
