@@ -398,3 +398,63 @@ crawl() {
     return 1
   fi
 }
+
+
+mischief_managed() {
+  local TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+  local WORKSPACE_DIR=$(pwd)
+  local SNAPSHOT_DIR="${HOME}/.mischief_snapshots"
+  local MISCHIEF_ARCHIVE="mischief_${TIMESTAMP}.zip"
+  local VAULT_ARCHIVE="${MISCHIEF_ARCHIVE}.vault"
+  local MARAUDERS_LOG="${SNAPSHOT_DIR}/marauders_log.txt"
+
+  # Ensure snapshot directory exists
+  mkdir -p "$SNAPSHOT_DIR"
+
+  echo -e "\033[1;35m🧙‍♂️ Mischief Managed! Archiving and encrypting your workspace...\033[0m"
+
+  # Zip current workspace, excluding .git & unnecessary clutter
+  zip -qr "${SNAPSHOT_DIR}/${MISCHIEF_ARCHIVE}" "$WORKSPACE_DIR" -x "*.git*" "*.venv*" "*node_modules*"
+
+  # Encrypt using Ansible Vault
+  ansible-vault encrypt "${SNAPSHOT_DIR}/${MISCHIEF_ARCHIVE}" --output="${SNAPSHOT_DIR}/${VAULT_ARCHIVE}"
+
+  # Cleanup unencrypted zip
+  rm "${SNAPSHOT_DIR}/${MISCHIEF_ARCHIVE}"
+
+  # Git stash or auto-commit
+  if git rev-parse --is-inside-work-tree &>/dev/null; then
+    git add -A && git commit -m "✨ Mischief managed snapshot at ${TIMESTAMP}" || git stash push -u -m "✨ Mischief managed stash at ${TIMESTAMP}"
+  fi
+
+  # Run Ansible cleanup/reset playbook
+  if [ -f "${WORKSPACE_DIR}/cleanup.yml" ]; then
+    echo -e "\033[1;34m🪄 Ansible restoring your workspace to pristine condition...\033[0m"
+    ansible-playbook "${WORKSPACE_DIR}/cleanup.yml"
+  fi
+
+  # Restart Devcontainer services gracefully (assuming Docker Compose or devcontainer CLI)
+  if [ -f ".devcontainer/docker-compose.yml" ]; then
+    docker-compose -f .devcontainer/docker-compose.yml restart
+  elif command -v devcontainer &>/dev/null; then
+    devcontainer restart
+  fi
+
+  # Log your Marauder’s entry
+  echo "🪄 Mischief managed at ${TIMESTAMP} from ${WORKSPACE_DIR}" >> "${MARAUDERS_LOG}"
+
+  # Whimsical Terminal Output 🎩
+  echo -e "\033[1;32m✨✨✨ Mischief Managed! Your workspace is pristine and your secrets safe. ✨✨✨\033[0m"
+  echo -e "🔮 Use \033[1;33mreveal_mischief\033[0m to view previous adventures!"
+}
+
+# Reveal past adventures from Marauder’s Log
+reveal_mischief() {
+  local MARAUDERS_LOG="${HOME}/.mischief_snapshots/marauders_log.txt"
+  if [ -f "$MARAUDERS_LOG" ]; then
+    echo -e "\033[1;36m📜 Marauder’s Log - Your Past Mischief:\033[0m"
+    cat "$MARAUDERS_LOG"
+  else
+    echo -e "\033[1;31m⚠️ No mischief logged yet!\033[0m"
+  fi
+}
