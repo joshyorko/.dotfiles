@@ -663,3 +663,7 @@ EOL
     # Final success message
     echo "✅ Note creation complete! Happy writing! 🎉"
 }
+
+
+
+export COMPOSE_BAKE=true
