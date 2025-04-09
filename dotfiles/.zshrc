@@ -243,31 +243,39 @@ compress() {
     echo -n "Enter the directory to compress: "
     read directory
     if [ ! -d "$directory" ]; then
-        echo "Directory does not exist."
+        echo "❌ Directory does not exist: $directory"
         return 1
     fi
 
     # Prompt for tarball name
     echo -n "Enter the name for the tarball (e.g., backup.tar.gz): "
     read tarball_name
-    # Check if pigz is installed, if not, fall back to gzip
-    if command -v pigz >/dev/null 2>&1; then
-        echo "pigz found, using pigz for compression."
-        compressor="pigz"
-    else
-        compressor="gzip"
-        echo "pigz not found, using gzip instead."
+    if [[ -z "$tarball_name" ]]; then
+        echo "❌ Tarball name cannot be empty."
+        return 1
     fi
 
-    # Compress the directory using tar with the chosen compressor
-    tar -I $compressor -cvf "${tarball_name}" "$directory" 2> /tmp/tar_errors.log | pv -lep -s $(find "$directory" -type f | wc -l) > /dev/null
-
-    # Check if the compression was successful
-    if [ $? -eq 0 ]; then
-        echo "Directory compressed successfully."
+    # Determine compression program
+    if command -v pigz >/dev/null 2>&1; then
+        echo "✅ pigz found, using pigz for compression."
+        compressor="pigz"
+        compress_cmd=(--use-compress-program=pigz)
     else
-        echo "Failed to compress the directory. Check the directory name and try again."
-        echo "Refer to /tmp/tar_errors.log for errors."
+        echo "⚠️  pigz not found, falling back to gzip."
+        compressor="gzip"
+        compress_cmd=(-z)
+    fi
+
+    echo "📦 Compressing $directory into $tarball_name..."
+
+    # Compress using tar with the appropriate compression method
+    tar -cf "$tarball_name" "${compress_cmd[@]}" "$directory" 2> /tmp/tar_errors.log
+
+    # Check result
+    if [ $? -eq 0 ]; then
+        echo "✅ Directory compressed successfully into $tarball_name."
+    else
+        echo "❌ Compression failed. Check /tmp/tar_errors.log for details."
     fi
 }
 
