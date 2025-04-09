@@ -466,3 +466,200 @@ reveal_mischief() {
     echo -e "\033[1;31m⚠️ No mischief logged yet!\033[0m"
   fi
 }
+
+
+
+# ZETTELKASTEN FUNCTION
+cz() {
+    echo "📝 Welcome to Zettelkasten Note Creation!"
+
+    # Usage function for error messaging
+    usage() {
+        cat <<EOF
+📚 Usage: cz [-e|--editor EDITOR] [-l|--local]
+Interactive Zettelkasten note creation wizard.
+
+Options:
+  -e, --editor     Optional: Specify editor (code|code-insiders|nvim)
+  -l, --local     Create note in current directory instead of PARA structure
+  -h, --help      Show this help message
+EOF
+        return 1
+    }
+
+    # Check for fzf dependency
+    if ! command -v fzf &> /dev/null; then
+        echo "❌ fzf is not installed. Installing..."
+        if command -v apt &> /dev/null; then
+            sudo apt update && sudo apt install -y fzf
+        elif command -v brew &> /dev/null; then
+            brew install fzf
+        else
+            echo "⚠️ Please install fzf manually to continue"
+            return 1
+        fi
+    fi
+
+    # Initialize variables
+    local EDITOR=""
+    local IS_LOCAL=false
+
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -e|--editor)
+                if [[ $2 =~ ^(code|code-insiders|nvim)$ ]]; then
+                    EDITOR="$2"
+                    shift 2
+                else
+                    echo "❌ Error: Invalid editor. Must be 'code', 'code-insiders', or 'nvim'"
+                    return 1
+                fi
+                ;;
+            -l|--local)
+                IS_LOCAL=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                return 0
+                ;;
+            *)
+                echo "❌ Error: Unknown option $1"
+                usage
+                return 1
+                ;;
+        esac
+    done
+
+    # Define the root directory for Zettelkasten notes
+    local ROOT_DIR="${ZET_ROOT_DIR:-$HOME/second_brain}"
+    local TARGET_DIR
+    local TOPIC_FOLDER
+
+    if [ "$IS_LOCAL" = true ]; then
+        TARGET_DIR="$PWD"
+        TOPIC_FOLDER=$(basename "$PWD")
+        echo "📍 Creating note in current directory: $TARGET_DIR"
+    else
+        echo "🎯 Let's create a new note!"
+
+        # Select PARA category using fzf with improved UI
+        echo "Step 1: Select PARA Category"
+        local PARA_CATEGORIES=("Projects" "Areas" "Resources" "Archive")
+        local PARA_CATEGORY=$(printf "%s\n" "${PARA_CATEGORIES[@]}" | fzf \
+            --prompt="Select PARA category: " \
+            --header="🗂️  PARA Categories (use arrow keys or type to filter)" \
+            --height=40% \
+            --border=rounded \
+            --info=inline)
+        
+        if [ -z "$PARA_CATEGORY" ]; then
+            echo "❌ No category selected. Exiting."
+            return 1
+        fi
+        echo "✅ Selected category: $PARA_CATEGORY"
+
+        # Get valid topic folders within the selected PARA category
+        echo -e "\nStep 2: Select or Create Topic Folder"
+        local TOPIC_FOLDERS=($(find "$ROOT_DIR/$PARA_CATEGORY" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null))
+
+        # Prompt for topic folder with ability to create new one
+        if [ ${#TOPIC_FOLDERS[@]} -eq 0 ]; then
+            echo "📝 No existing topics found. Enter a new topic name:"
+            read TOPIC_FOLDER
+        else
+            TOPIC_FOLDER=$(printf "%s\n" "${TOPIC_FOLDERS[@]}" "[[Create New Topic]]" | fzf \
+                --prompt="Select or create topic folder: " \
+                --header="📂 Topics in $PARA_CATEGORY (use arrow keys or type to filter)" \
+                --height=40% \
+                --border=rounded \
+                --info=inline)
+            
+            if [ "$TOPIC_FOLDER" = "[[Create New Topic]]" ]; then
+                echo "📝 Enter new topic folder name:"
+                read TOPIC_FOLDER
+            fi
+        fi
+
+        if [ -z "$TOPIC_FOLDER" ]; then
+            echo "❌ No topic folder specified. Exiting."
+            return 1
+        fi
+        echo "✅ Selected/Created topic: $TOPIC_FOLDER"
+
+        TARGET_DIR="${ROOT_DIR}/${PARA_CATEGORY}/${TOPIC_FOLDER}"
+    fi
+
+    # Prompt for title with character count
+    echo -e "\nStep 3: Enter Note Title"
+    echo "📝 Enter your note title (be descriptive):"
+    local TITLE
+    read TITLE
+
+    # Show character count and validate title
+    local TITLE_LENGTH=${#TITLE}
+    if [ -z "$TITLE" ]; then
+        echo "❌ No title specified. Exiting."
+        return 1
+    elif [ $TITLE_LENGTH -lt 3 ]; then
+        echo "❌ Title too short (minimum 3 characters). Exiting."
+        return 1
+    fi
+    echo "✅ Title accepted ($TITLE_LENGTH characters)"
+
+    # Generate timestamp with seconds for uniqueness
+    local TIMESTAMP=$(date +%Y%m%d%H%M%S)
+
+    # Sanitize title with feedback
+    echo -e "\n🔄 Processing note..."
+    local SANITIZED_TITLE=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
+
+    # Create filename
+    local FILENAME="${TIMESTAMP}-${SANITIZED_TITLE}.md"
+
+    # Create the target directory if it doesn't exist (for PARA structure)
+    mkdir -p "${TARGET_DIR}"
+
+    # Create the note file with template
+    cat > "${TARGET_DIR}/${FILENAME}" << EOL
+---
+id: ${TIMESTAMP}
+title: "${TITLE}"
+tags: [${TOPIC_FOLDER}]
+created: "$(date +'%Y-%m-%d %H:%M:%S')"
+source: 
+modified: 
+---
+
+## Idea
+
+[Write your idea here]
+
+## Source Notes
+
+[Write your source notes here]
+
+## Links
+
+- [[link-to-related-note]]
+EOL
+
+    echo "✨ Created new note: ${FILENAME}"
+    if [ "$IS_LOCAL" = true ]; then
+        echo "📂 Location: Current directory"
+    else
+        echo "📂 Location: ${PARA_CATEGORY}/${TOPIC_FOLDER}"
+    fi
+
+    # Open the file in the specified editor if one was provided
+    if [ -n "$EDITOR" ]; then
+        echo "🚀 Opening note in $EDITOR..."
+        $EDITOR "${TARGET_DIR}/${FILENAME}"
+    else
+        echo "📝 Note ready for editing! Use 'cz -e <editor>' next time to open automatically."
+    fi
+
+    # Final success message
+    echo "✅ Note creation complete! Happy writing! 🎉"
+}
