@@ -527,6 +527,163 @@ EOF
         echo "$valid_structure"
     }
 
+    # Function to get immediate subdirectories only (one level)
+    get_immediate_subdirs() {
+        local dir="$1"
+        find "$dir" -mindepth 1 -maxdepth 1 -type d -not -path '*/\.*' -exec basename {} \; | sort
+    }
+
+    # Function to navigate directories one level at a time
+    navigate_directories() {
+        local base_dir="$1"
+        local current_path=""
+        local full_path="$base_dir"
+        local tags=()
+        
+        while true; do
+            echo "📂 Current path: ${current_path:-<root>}" >&2
+            echo >&2
+            echo "Available directories:" >&2
+            echo >&2
+            
+            # Get immediate subdirectories at current level
+            local subdirs=("${(@f)$(get_immediate_subdirs "$full_path")}")
+            
+            if [ ${#subdirs[@]} -eq 0 ]; then
+                echo "No subdirectories found at this level." >&2
+                echo >&2
+                echo "Options:" >&2
+                echo "1. Create new directory" >&2
+                echo "2. Use current path" >&2
+                echo "3. Go back" >&2
+                echo >&2
+                printf "Enter choice (1-3): " >&2
+                read choice
+                
+                case "$choice" in
+                    1)
+                        printf "Enter new directory name: " >&2
+                        read dirname
+                        echo >&2
+                        if [ -n "$dirname" ]; then
+                            if [ -z "$current_path" ]; then
+                                current_path="$dirname"
+                            else
+                                current_path="${current_path}/${dirname}"
+                            fi
+                            tags+=("$dirname")
+                            # Ensure full_path is updated correctly before mkdir
+                            full_path="${base_dir}/${current_path}"
+                            mkdir -p "$full_path"
+                            break
+                        fi
+                        ;;
+                    2)
+                        if [ -z "$current_path" ]; then
+                            echo "❌ Cannot use empty path. Please create a directory or go back." >&2
+                            continue
+                        fi
+                        break
+                        ;;
+                    3)
+                        if [ -z "$current_path" ]; then
+                            echo "❌ Already at root. Please select or create a directory." >&2
+                            continue
+                        fi
+                        # Go back one level
+                        current_path=$(dirname "$current_path")
+                        # Handle going back to root where dirname is '.'
+                        if [[ "$current_path" == "." ]]; then
+                            current_path=""
+                        fi
+                        full_path="$base_dir/$current_path"
+                        tags=(${tags[@]::${#tags[@]}-1})
+                        ;;
+                    *)
+                        echo "Invalid choice" >&2
+                        ;;
+                esac
+                continue
+            fi
+            
+            # Add navigation options
+            local options=("${subdirs[@]}" "[[Create New Directory]]" "[[Use Current Path]]" "[[Go Back]]")
+            
+            local selection=$(printf "%s\n" "${options[@]}" | fzf \
+                --prompt="Select directory or action: " \
+                --header="📂 Current path: ${current_path:-<root>}" \
+                --height=40% \
+                --border=rounded \
+                --info=inline)
+            
+            case "$selection" in
+                "[[Create New Directory]]")
+                    printf "\nEnter new directory name: " >&2
+                    read dirname
+                    echo >&2
+                    if [ -n "$dirname" ]; then
+                        if [ -z "$current_path" ]; then
+                            current_path="$dirname"
+                        else
+                            current_path="${current_path}/${dirname}"
+                        fi
+                        tags+=("$dirname")
+                        # Ensure full_path is updated correctly before mkdir
+                        full_path="${base_dir}/${current_path}"
+                        mkdir -p "$full_path"
+                        break
+                    fi
+                    ;;
+                "[[Use Current Path]]")
+                    if [ -z "$current_path" ]; then
+                        echo "❌ Cannot use empty path. Please select or create a directory." >&2
+                        continue
+                    fi
+                    break
+                    ;;
+                "[[Go Back]]")
+                    if [ -z "$current_path" ]; then
+                        echo "❌ Already at root. Please select or create a directory." >&2
+                        continue
+                    fi
+                    # Go back one level
+                    current_path=$(dirname "$current_path")
+                    # Handle going back to root where dirname is '.'
+                    if [[ "$current_path" == "." ]]; then
+                        current_path=""
+                    fi
+                    full_path="$base_dir/$current_path"
+                    tags=(${tags[@]::${#tags[@]}-1})
+                    ;;
+                "") # ESC pressed
+                    if [ -z "$current_path" ]; then
+                        echo "❌ No directory selected. Exiting." >&2
+                        current_path=""
+                        break
+                    fi
+                    break
+                    ;;
+                *)
+                    if [ -z "$current_path" ]; then
+                        current_path="$selection"
+                    else
+                        current_path="${current_path}/${selection}"
+                    fi
+                    full_path="${base_dir}/${current_path}"
+                    tags+=("$selection")
+                    ;;
+            esac
+        done
+
+        # Prepare the final output string securely
+        local final_path="$current_path"
+        local final_tags_string=$(IFS=','; echo "${tags[*]}")
+        local output_string="${final_path}|${final_tags_string}"
+
+        # Only echo the final prepared string to standard output
+        echo "$output_string"
+    }
+
     # Check for fzf dependency
     if ! command -v fzf &> /dev/null; then
         echo "❌ fzf is not installed. Installing..."
@@ -640,33 +797,23 @@ EOF
             fi
             echo "✅ Selected category: $PARA_CATEGORY"
 
-            # Step 3: Select or Create Topic Folder
-            echo -e "\nStep 3: Select or Create Topic Folder"
-            local TOPIC_FOLDERS=($(find "$ROOT_DIR/$PARA_CATEGORY" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null))
+            # Step 3: Navigate through directories one level at a time
+            echo -e "\nStep 3: Navigate Topic Folders"
+            local BASE_DIR="$ROOT_DIR/$PARA_CATEGORY"
+            local RESULT=$(navigate_directories "$BASE_DIR")
             
-            if [ ${#TOPIC_FOLDERS[@]} -eq 0 ]; then
-                echo "📝 No existing topics found. Enter a new topic name:"
-                read TOPIC_FOLDER
-            else
-                TOPIC_FOLDER=$(printf "%s\n" "${TOPIC_FOLDERS[@]}" "[[Create New Topic]]" | fzf \
-                    --prompt="Select or create topic folder: " \
-                    --header="📂 Topics in $PARA_CATEGORY (use arrow keys or type to filter)" \
-                    --height=40% \
-                    --border=rounded \
-                    --info=inline)
-                
-                if [ "$TOPIC_FOLDER" = "[[Create New Topic]]" ]; then
-                    echo "📝 Enter new topic folder name:"
-                    read TOPIC_FOLDER
-                fi
-            fi
-
+            # Split result into path and tags
+            TOPIC_FOLDER=$(echo "$RESULT" | cut -d'|' -f1)
+            local TAGS=$(echo "$RESULT" | cut -d'|' -f2)
+            
             if [ -z "$TOPIC_FOLDER" ]; then
                 echo "❌ No topic folder specified. Exiting."
                 return 1
             fi
-            echo "✅ Selected/Created topic: $TOPIC_FOLDER"
+            
+            echo "✅ Selected/Created topic path: $TOPIC_FOLDER"
             TARGET_DIR="${ROOT_DIR}/${PARA_CATEGORY}/${TOPIC_FOLDER}"
+            mkdir -p "$TARGET_DIR"
         fi
     fi
 
@@ -713,7 +860,7 @@ title: "${TITLE}"
 date: "$(date +'%Y-%m-%d')"
 created: "$(date +'%Y-%m-%d %H:%M:%S')"
 modified: 
-tags: [journal, ${TOPIC_FOLDER}]
+tags: [journal, ${TAGS}]
 ---
 
 ## Context & State
@@ -745,7 +892,7 @@ EOL
 ---
 id: ${TIMESTAMP}
 title: "${TITLE}"
-tags: [${TOPIC_FOLDER}]
+tags: [${TAGS}]
 created: "$(date +'%Y-%m-%d %H:%M:%S')"
 modified: 
 ---
@@ -821,9 +968,5 @@ EOL
         echo "  - Review previous daily entries for continuity"
     fi
 }
-
-
-
-
 
 export COMPOSE_BAKE=true
