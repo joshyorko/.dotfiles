@@ -514,7 +514,7 @@ EOF
     detect_para_structure() {
         local dir="$1"
         # Check if the directory contains the main PARA folders
-        local para_folders=("Projects" "Areas" "Resources" "Archive")
+        local para_folders=("Projects" "Areas" "Resources" "Archives")
         local valid_structure=true
         
         for folder in "${para_folders[@]}"; do
