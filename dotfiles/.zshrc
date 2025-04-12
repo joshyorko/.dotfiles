@@ -482,6 +482,7 @@ reveal_mischief() {
 
 
 
+
 # SMART NOTE CREATION FUNCTION for .zshrc
 # This script creates either a Zettelkasten note or a Journal entry with structured templates.
 cz() {
@@ -507,6 +508,23 @@ Examples:
   cz -j -e nvim       # Create Journal entry and open in Neovim
 EOF
         return 1
+    }
+
+    # Function to detect if a directory has PARA structure
+    detect_para_structure() {
+        local dir="$1"
+        # Check if the directory contains the main PARA folders
+        local para_folders=("Projects" "Areas" "Resources" "Archive")
+        local valid_structure=true
+        
+        for folder in "${para_folders[@]}"; do
+            if [ ! -d "$dir/$folder" ]; then
+                valid_structure=false
+                break
+            fi
+        done
+        
+        echo "$valid_structure"
     }
 
     # Check for fzf dependency
@@ -573,7 +591,26 @@ EOF
     done
 
     # Define the root directory for notes
-    local ROOT_DIR="${ZET_ROOT_DIR:-$HOME/second_brain}"
+    # First check if current directory has PARA structure
+    local ROOT_DIR
+    if [ "$(detect_para_structure "$PWD")" = "true" ]; then
+        ROOT_DIR="$PWD"
+        echo "📂 Found PARA structure in current directory"
+    elif [ -n "${ZET_ROOT_DIR}" ] && [ "$(detect_para_structure "${ZET_ROOT_DIR}")" = "true" ]; then
+        ROOT_DIR="${ZET_ROOT_DIR}"
+        echo "📂 Using configured ZET_ROOT_DIR: ${ZET_ROOT_DIR}"
+    elif [ "$(detect_para_structure "$HOME/second_brain")" = "true" ]; then
+        ROOT_DIR="$HOME/second_brain"
+        echo "📂 Using default second_brain location"
+    else
+        echo "⚠️  No PARA structure found, initializing in $HOME/second_brain"
+        ROOT_DIR="$HOME/second_brain"
+        # Create PARA structure
+        for folder in "Projects" "Areas" "Resources" "Archive"; do
+            mkdir -p "$ROOT_DIR/$folder"
+        done
+    fi
+
     local TARGET_DIR
     local TOPIC_FOLDER
 
@@ -679,41 +716,29 @@ modified:
 tags: [journal, ${TOPIC_FOLDER}]
 ---
 
-## 🌅 Morning Reflection
-# Set your intentions for the day and reflect on your current state
-- How did you wake up? Energy level (1-10)?
-- What's your main focus for today?
-- Any commitments or deadlines?
+## Context & State
+- Current focus:
+- Energy level:
+- Key challenges:
 
-## 🔗 Linking & Connections
-# Connect your thoughts to your knowledge network
-- Related journal entries: [[YYYYMMDD]]
-- Connected Zettel notes: [[concept-note]]
-- Emerging patterns or themes:
+## Daily Insights
+[Capture atomic ideas that could become Zettel notes]
+- 
 
-## 🔥 Action Items & Tasks
-# Track your daily priorities and progress
-- [ ] High priority:
-- [ ] Medium priority:
-- [ ] Nice to have:
+## Connections
+- Related notes: [[note-id]] - [connection explanation]
+- Emerging patterns:
+- Questions arising:
 
-## 📝 Key Events and Observations
-# Record significant moments, insights, and learnings
-- Meetings & Conversations:
-- Ideas & Insights:
-- Questions & Curiosities:
+## Actions & Progress
+- [ ] Priority tasks:
+- Progress made:
+- Blocks encountered:
 
-## 🌙 Evening Reflection
-# Review and process your day
-- What went well today?
-- What could be improved?
-- Key learnings or insights:
+## Follow-up Thoughts
+- Ideas to explore:
+- Future Zettels to create:
 
-## 💭 Additional Thoughts
-# Capture any other ideas or future considerations
-- Random thoughts:
-- Future projects/ideas:
-- Links to explore:
 EOL
     else
         cat > "${TARGET_DIR}/${FILENAME}" << EOL
@@ -722,33 +747,30 @@ id: ${TIMESTAMP}
 title: "${TITLE}"
 tags: [${TOPIC_FOLDER}]
 created: "$(date +'%Y-%m-%d %H:%M:%S')"
-source: 
 modified: 
-references: []
 ---
 
-## 🤔 Core Idea
-# What is the main concept or insight?
-[Write your core idea here - keep it atomic and focused]
+# ${TITLE}
 
-## 📚 Source Notes & Context
-# Where did this idea come from? What's the context?
-- Source: [if applicable]
-- Context: [background information]
-- Related concepts:
+## Context
+[Brief context or trigger for this note]
 
-## 🔗 Links & References
-# How does this note connect to your knowledge network?
+## Main Idea
+[Single, atomic idea - one thought per note]
+
+## Development
+[Expand on the main idea, but stay focused and atomic]
+
+## References & Links
 - Related notes:
-  - [[link-to-related-note]]
-- Supporting materials:
-- Contradicting viewpoints:
+  - [[note-id]] - Connection explanation
+  - [[another-note]] - Why it connects
+- Sources:
+  - [if applicable]
 
-## 💡 Personal Insights
-# Your unique thoughts and applications
-- Implications:
-- Applications:
-- Questions to explore:
+## Future Lines of Thought
+[Questions or ideas this note generates]
+
 EOL
     fi
 
@@ -799,6 +821,7 @@ EOL
         echo "  - Review previous daily entries for continuity"
     fi
 }
+
 
 
 
