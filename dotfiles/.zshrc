@@ -247,14 +247,19 @@ compress() {
         return 1
     fi
 
-    # Prompt for tarball name
-    echo -n "Enter the name for the tarball (e.g., backup.tar.gz): "
-    read tarball_name
-    if [[ -z "$tarball_name" ]]; then
-        echo "❌ Tarball name cannot be empty."
-        return 1
+    # Prompt for backup name (optional)
+    echo -n "Enter a name for the backup (press Enter to use directory name): "
+    read backup_name
+    
+    # Use directory name if no backup name provided
+    if [[ -z "$backup_name" ]]; then
+        backup_name=$(basename "$directory")
     fi
-
+    
+    # Create timestamp and final filename
+    timestamp=$(date '+%Y%m%d_%H%M%S')
+    tarball_name="${timestamp}_${backup_name}.tar.gz"
+    
     # Determine compression program
     if command -v pigz >/dev/null 2>&1; then
         echo "✅ pigz found, using pigz for compression."
@@ -273,7 +278,8 @@ compress() {
 
     # Check result
     if [ $? -eq 0 ]; then
-        echo "✅ Directory compressed successfully into $tarball_name."
+        echo "✅ Directory compressed successfully into $tarball_name"
+        echo "📍 Full path: $(pwd)/$tarball_name"
     else
         echo "❌ Compression failed. Check /tmp/tar_errors.log for details."
     fi
@@ -375,15 +381,22 @@ cn() {
     return 1
   fi
 
-  # List all available namespaces
-  ns_list=$(kubectl get ns -o jsonpath='{.items[*].metadata.name}')
+  # Try to get namespaces using kubectl first, then fallback to rancher kubectl
+  ns_list=$(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || rancher kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+
+  if [ -z "$ns_list" ]; then
+    echo "No namespaces found using kubectl or rancher kubectl"
+    return 1
+  fi
 
   # Use fzf to display namespaces with fuzzy finding
   selected_ns=$(echo "$ns_list" | tr ' ' '\n' | fzf --prompt="Select namespace: " --select-1 --exit-0)
 
   # If a selection is made, update the default namespace
   if [ -n "$selected_ns" ]; then
-    kubectl config set-context --current --namespace="$selected_ns" > /dev/null 2>&1
+    # Try kubectl first, then fallback to rancher kubectl
+    kubectl config set-context --current --namespace="$selected_ns" > /dev/null 2>&1 || \
+    rancher kubectl config set-context --current --namespace="$selected_ns" > /dev/null 2>&1
     echo "Selected namespace: $selected_ns"
   else
     echo "No namespace selected."
@@ -469,20 +482,29 @@ reveal_mischief() {
 
 
 
-# ZETTELKASTEN FUNCTION
+# SMART NOTE CREATION FUNCTION for .zshrc
+# This script creates either a Zettelkasten note or a Journal entry with structured templates.
 cz() {
-    echo "📝 Welcome to Zettelkasten Note Creation!"
+    echo "📝 Welcome to Smart Note Creation!"
 
     # Usage function for error messaging
     usage() {
         cat <<EOF
-📚 Usage: cz [-e|--editor EDITOR] [-l|--local]
-Interactive Zettelkasten note creation wizard.
+📚 Usage: cz [-e|--editor EDITOR] [-l|--local] [-j|--journal]
+Interactive note creation wizard for Zettelkasten notes and Journal entries.
 
 Options:
   -e, --editor     Optional: Specify editor (code|code-insiders|nvim)
-  -l, --local     Create note in current directory instead of PARA structure
-  -h, --help      Show this help message
+  -l, --local      Create note in current directory instead of PARA structure
+  -j, --journal    Create a Journal entry (instead of a standard Zettel)
+  -h, --help       Show this help message
+
+Examples:
+  cz                     # Create a standard Zettel note
+  cz -j                 # Create a Journal entry
+  cz -e code           # Create note and open in VS Code
+  cz -l                # Create note in current directory
+  cz -j -e nvim       # Create Journal entry and open in Neovim
 EOF
         return 1
     }
@@ -494,8 +516,13 @@ EOF
             sudo apt update && sudo apt install -y fzf
         elif command -v brew &> /dev/null; then
             brew install fzf
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y fzf
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y fzf
         else
             echo "⚠️ Please install fzf manually to continue"
+            echo "Visit: https://github.com/junegunn/fzf#installation"
             return 1
         fi
     fi
@@ -503,13 +530,22 @@ EOF
     # Initialize variables
     local EDITOR=""
     local IS_LOCAL=false
+    local NOTE_TYPE="zettel"  # default note type
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
             -e|--editor)
+                if [ -z "$2" ]; then
+                    echo "❌ Error: --editor option requires an editor value"
+                    return 1
+                fi
                 if [[ $2 =~ ^(code|code-insiders|nvim)$ ]]; then
                     EDITOR="$2"
+                    if ! command -v "$EDITOR" &> /dev/null; then
+                        echo "❌ Error: $EDITOR is not installed"
+                        return 1
+                    fi
                     shift 2
                 else
                     echo "❌ Error: Invalid editor. Must be 'code', 'code-insiders', or 'nvim'"
@@ -518,6 +554,10 @@ EOF
                 ;;
             -l|--local)
                 IS_LOCAL=true
+                shift
+                ;;
+            -j|--journal)
+                NOTE_TYPE="journal"
                 shift
                 ;;
             -h|--help)
@@ -532,7 +572,7 @@ EOF
         esac
     done
 
-    # Define the root directory for Zettelkasten notes
+    # Define the root directory for notes
     local ROOT_DIR="${ZET_ROOT_DIR:-$HOME/second_brain}"
     local TARGET_DIR
     local TOPIC_FOLDER
@@ -542,87 +582,141 @@ EOF
         TOPIC_FOLDER=$(basename "$PWD")
         echo "📍 Creating note in current directory: $TARGET_DIR"
     else
-        echo "🎯 Let's create a new note!"
-
-        # Select PARA category using fzf with improved UI
-        echo "Step 1: Select PARA Category"
-        local PARA_CATEGORIES=("Projects" "Areas" "Resources" "Archive")
-        local PARA_CATEGORY=$(printf "%s\n" "${PARA_CATEGORIES[@]}" | fzf \
-            --prompt="Select PARA category: " \
-            --header="🗂️  PARA Categories (use arrow keys or type to filter)" \
-            --height=40% \
-            --border=rounded \
-            --info=inline)
-        
-        if [ -z "$PARA_CATEGORY" ]; then
-            echo "❌ No category selected. Exiting."
-            return 1
-        fi
-        echo "✅ Selected category: $PARA_CATEGORY"
-
-        # Get valid topic folders within the selected PARA category
-        echo -e "\nStep 2: Select or Create Topic Folder"
-        local TOPIC_FOLDERS=($(find "$ROOT_DIR/$PARA_CATEGORY" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null))
-
-        # Prompt for topic folder with ability to create new one
-        if [ ${#TOPIC_FOLDERS[@]} -eq 0 ]; then
-            echo "📝 No existing topics found. Enter a new topic name:"
-            read TOPIC_FOLDER
+        # For Journal entries, automatically set PARA category to Areas/journal
+        if [ "$NOTE_TYPE" = "journal" ]; then
+            PARA_CATEGORY="Areas"
+            TOPIC_FOLDER="journal"
+            TARGET_DIR="${ROOT_DIR}/${PARA_CATEGORY}/${TOPIC_FOLDER}"
         else
-            TOPIC_FOLDER=$(printf "%s\n" "${TOPIC_FOLDERS[@]}" "[[Create New Topic]]" | fzf \
-                --prompt="Select or create topic folder: " \
-                --header="📂 Topics in $PARA_CATEGORY (use arrow keys or type to filter)" \
+            echo "Step 2: Select PARA Category"
+            local PARA_CATEGORIES=("Projects" "Areas" "Resources" "Archive")
+            local PARA_CATEGORY=$(printf "%s\n" "${PARA_CATEGORIES[@]}" | fzf \
+                --prompt="Select PARA category: " \
+                --header="🗂️  PARA Categories (use arrow keys or type to filter)" \
                 --height=40% \
                 --border=rounded \
                 --info=inline)
             
-            if [ "$TOPIC_FOLDER" = "[[Create New Topic]]" ]; then
-                echo "📝 Enter new topic folder name:"
-                read TOPIC_FOLDER
+            if [ -z "$PARA_CATEGORY" ]; then
+                echo "❌ No category selected. Exiting."
+                return 1
             fi
-        fi
+            echo "✅ Selected category: $PARA_CATEGORY"
 
-        if [ -z "$TOPIC_FOLDER" ]; then
-            echo "❌ No topic folder specified. Exiting."
+            # Step 3: Select or Create Topic Folder
+            echo -e "\nStep 3: Select or Create Topic Folder"
+            local TOPIC_FOLDERS=($(find "$ROOT_DIR/$PARA_CATEGORY" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null))
+            
+            if [ ${#TOPIC_FOLDERS[@]} -eq 0 ]; then
+                echo "📝 No existing topics found. Enter a new topic name:"
+                read TOPIC_FOLDER
+            else
+                TOPIC_FOLDER=$(printf "%s\n" "${TOPIC_FOLDERS[@]}" "[[Create New Topic]]" | fzf \
+                    --prompt="Select or create topic folder: " \
+                    --header="📂 Topics in $PARA_CATEGORY (use arrow keys or type to filter)" \
+                    --height=40% \
+                    --border=rounded \
+                    --info=inline)
+                
+                if [ "$TOPIC_FOLDER" = "[[Create New Topic]]" ]; then
+                    echo "📝 Enter new topic folder name:"
+                    read TOPIC_FOLDER
+                fi
+            fi
+
+            if [ -z "$TOPIC_FOLDER" ]; then
+                echo "❌ No topic folder specified. Exiting."
+                return 1
+            fi
+            echo "✅ Selected/Created topic: $TOPIC_FOLDER"
+            TARGET_DIR="${ROOT_DIR}/${PARA_CATEGORY}/${TOPIC_FOLDER}"
+        fi
+    fi
+
+    # For Journal entries, use a default title based on the date
+    local TITLE=""
+    local SANITIZED_TITLE=""
+    if [ "$NOTE_TYPE" = "journal" ]; then
+        TITLE="$(date +'%Y-%m-%d') Daily Journal"
+        SANITIZED_TITLE="$(date +'%Y-%m-%d')-daily-journal"
+        echo "✅ Default journal title set to: \"$TITLE\""
+    else
+        echo -e "\nStep 4: Enter Note Title"
+        echo "📝 Enter your note title (be descriptive):"
+        read TITLE
+
+        local TITLE_LENGTH=${#TITLE}
+        if [ -z "$TITLE" ]; then
+            echo "❌ No title specified. Exiting."
+            return 1
+        elif [ $TITLE_LENGTH -lt 3 ]; then
+            echo "❌ Title too short (minimum 3 characters). Exiting."
             return 1
         fi
-        echo "✅ Selected/Created topic: $TOPIC_FOLDER"
-
-        TARGET_DIR="${ROOT_DIR}/${PARA_CATEGORY}/${TOPIC_FOLDER}"
+        echo "✅ Title accepted ($TITLE_LENGTH characters)"
+        SANITIZED_TITLE=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
     fi
 
-    # Prompt for title with character count
-    echo -e "\nStep 3: Enter Note Title"
-    echo "📝 Enter your note title (be descriptive):"
-    local TITLE
-    read TITLE
-
-    # Show character count and validate title
-    local TITLE_LENGTH=${#TITLE}
-    if [ -z "$TITLE" ]; then
-        echo "❌ No title specified. Exiting."
-        return 1
-    elif [ $TITLE_LENGTH -lt 3 ]; then
-        echo "❌ Title too short (minimum 3 characters). Exiting."
-        return 1
-    fi
-    echo "✅ Title accepted ($TITLE_LENGTH characters)"
-
-    # Generate timestamp with seconds for uniqueness
+    # Generate a timestamp with seconds for uniqueness
     local TIMESTAMP=$(date +%Y%m%d%H%M%S)
-
-    # Sanitize title with feedback
-    echo -e "\n🔄 Processing note..."
-    local SANITIZED_TITLE=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
 
     # Create filename
     local FILENAME="${TIMESTAMP}-${SANITIZED_TITLE}.md"
 
-    # Create the target directory if it doesn't exist (for PARA structure)
+    # Create the target directory if it doesn't exist
     mkdir -p "${TARGET_DIR}"
 
-    # Create the note file with template
-    cat > "${TARGET_DIR}/${FILENAME}" << EOL
+    # Create the note file with the appropriate template
+    if [ "$NOTE_TYPE" = "journal" ]; then
+        cat > "${TARGET_DIR}/${FILENAME}" << EOL
+---
+id: ${TIMESTAMP}
+type: journal
+title: "${TITLE}"
+date: "$(date +'%Y-%m-%d')"
+created: "$(date +'%Y-%m-%d %H:%M:%S')"
+modified: 
+tags: [journal, ${TOPIC_FOLDER}]
+---
+
+## 🌅 Morning Reflection
+# Set your intentions for the day and reflect on your current state
+- How did you wake up? Energy level (1-10)?
+- What's your main focus for today?
+- Any commitments or deadlines?
+
+## 🔗 Linking & Connections
+# Connect your thoughts to your knowledge network
+- Related journal entries: [[YYYYMMDD]]
+- Connected Zettel notes: [[concept-note]]
+- Emerging patterns or themes:
+
+## 🔥 Action Items & Tasks
+# Track your daily priorities and progress
+- [ ] High priority:
+- [ ] Medium priority:
+- [ ] Nice to have:
+
+## 📝 Key Events and Observations
+# Record significant moments, insights, and learnings
+- Meetings & Conversations:
+- Ideas & Insights:
+- Questions & Curiosities:
+
+## 🌙 Evening Reflection
+# Review and process your day
+- What went well today?
+- What could be improved?
+- Key learnings or insights:
+
+## 💭 Additional Thoughts
+# Capture any other ideas or future considerations
+- Random thoughts:
+- Future projects/ideas:
+- Links to explore:
+EOL
+    else
+        cat > "${TARGET_DIR}/${FILENAME}" << EOL
 ---
 id: ${TIMESTAMP}
 title: "${TITLE}"
@@ -630,22 +724,49 @@ tags: [${TOPIC_FOLDER}]
 created: "$(date +'%Y-%m-%d %H:%M:%S')"
 source: 
 modified: 
+references: []
 ---
 
-## Idea
+## 🤔 Core Idea
+# What is the main concept or insight?
+[Write your core idea here - keep it atomic and focused]
 
-[Write your idea here]
+## 📚 Source Notes & Context
+# Where did this idea come from? What's the context?
+- Source: [if applicable]
+- Context: [background information]
+- Related concepts:
 
-## Source Notes
+## 🔗 Links & References
+# How does this note connect to your knowledge network?
+- Related notes:
+  - [[link-to-related-note]]
+- Supporting materials:
+- Contradicting viewpoints:
 
-[Write your source notes here]
-
-## Links
-
-- [[link-to-related-note]]
+## 💡 Personal Insights
+# Your unique thoughts and applications
+- Implications:
+- Applications:
+- Questions to explore:
 EOL
+    fi
 
-    echo "✨ Created new note: ${FILENAME}"
+    # Create a symbolic link to the new note in the relevant category index if not local
+    if [ "$IS_LOCAL" = false ]; then
+        local INDEX_FILE="${ROOT_DIR}/${PARA_CATEGORY}/00_${TOPIC_FOLDER}_index.md"
+        if [ ! -f "$INDEX_FILE" ]; then
+            cat > "$INDEX_FILE" << EOL
+# ${TOPIC_FOLDER} Index
+
+## Recent Notes
+EOL
+        fi
+        echo "- [[${FILENAME%.*}]] - ${TITLE}" >> "$INDEX_FILE"
+        echo "📔 Added note reference to index: ${INDEX_FILE}"
+    fi
+
+    echo "✨ Created new ${NOTE_TYPE}: ${FILENAME}"
     if [ "$IS_LOCAL" = true ]; then
         echo "📂 Location: Current directory"
     else
@@ -655,14 +776,30 @@ EOL
     # Open the file in the specified editor if one was provided
     if [ -n "$EDITOR" ]; then
         echo "🚀 Opening note in $EDITOR..."
-        $EDITOR "${TARGET_DIR}/${FILENAME}"
+        if ! $EDITOR "${TARGET_DIR}/${FILENAME}" 2>/dev/null; then
+            echo "❌ Error: Failed to open $EDITOR. The note was created but couldn't be opened."
+            echo "📂 You can find it at: ${TARGET_DIR}/${FILENAME}"
+            return 1
+        fi
     else
         echo "📝 Note ready for editing! Use 'cz -e <editor>' next time to open automatically."
     fi
 
-    # Final success message
+    # Final feedback with linking suggestions
     echo "✅ Note creation complete! Happy writing! 🎉"
+    if [ "$NOTE_TYPE" = "zettel" ]; then
+        echo "💡 Tips:"
+        echo "  - Link this note to related concepts using [[note-title]]"
+        echo "  - Add relevant tags in the frontmatter"
+        echo "  - Keep atomic: one main idea per note"
+    else
+        echo "💡 Tips:"
+        echo "  - Link to relevant Zettel notes from your journal"
+        echo "  - Track your energy levels and patterns"
+        echo "  - Review previous daily entries for continuity"
+    fi
 }
+
 
 
 
