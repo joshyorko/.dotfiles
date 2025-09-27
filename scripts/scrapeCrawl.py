@@ -2,331 +2,494 @@
 
 # /// script
 # dependencies = [
-#   "typer>=0.15.1",
-#   "rich>=13.9.4",
-#   "crawl4ai==0.4.248"
+#   "typer",
+#   "rich",
+#   "crawl4ai",
+#   "playwright",
+#   "aiohttp",
+#   "aiofiles",
+#   "pydantic"
 # ]
 # ///
 
+"""
+Modern Web Scraping Tool using Crawl4AI
+
+A comprehensive web scraping tool built with the latest versions of crawl4ai, typer, and rich.
+Provides enhanced error handling, better logging, and modern async patterns.
+"""
+
 import asyncio
-import typer
-import base64
 import json
-import os
-import sys
-import subprocess
 import logging
-import csv
-from pathlib import Path
-from rich import print
-from rich.console import Console
-from rich.markdown import Markdown
-from typing import Optional, Dict, Any, Tuple
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, Any, Tuple, List
+import base64
 
-app = typer.Typer()
+import typer
+from rich import print as rprint
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+from rich.markdown import Markdown
+from rich.table import Table
+from rich.panel import Panel
+from pydantic import BaseModel, ConfigDict
+
+# Initialize console and app
 console = Console()
+app = typer.Typer(
+    name="scrapecrawl",
+    help="Modern web scraping tool powered by Crawl4AI",
+    add_completion=False,
+    rich_markup_mode="rich"
+)
 
-# Set up logging (optional)
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("crawl4ai")
+# Configure rich logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(console=console, rich_tracebacks=True)]
+)
+logger = logging.getLogger("scrapecrawl")
 
-def ensure_playwright_browsers() -> bool:
-    """Check and install Playwright browsers if needed."""
+
+class CrawlConfig(BaseModel):
+    """Configuration model for crawl operations."""
+    model_config = ConfigDict(extra="forbid")
+    
+    url: str
+    browser_type: str = "chromium"
+    headless: bool = True
+    screenshot: bool = False
+    screenshot_wait_for: float = 2.0
+    wait_for_images: bool = False
+    extract_links: bool = False
+    magic_mode: bool = False
+    output_dir: Optional[Path] = None
+    write_files: bool = False
+    include_debug: bool = False
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization to set default output directory."""
+        if self.output_dir is None:
+            self.output_dir = Path.cwd() / "crawl_outputs"
+
+
+class CrawlResult(BaseModel):
+    """Structured result from crawl operation."""
+    model_config = ConfigDict(extra="allow")
+    
+    success: bool
+    url: str
+    status_code: Optional[int] = None
+    html: Optional[str] = None
+    markdown: Optional[str] = None
+    cleaned_html: Optional[str] = None
+    links: Optional[List[Dict[str, str]]] = None
+    media: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    screenshot: Optional[str] = None
+    error: Optional[str] = None
+    timestamp: datetime = datetime.now()
+
+
+async def ensure_playwright_setup() -> bool:
+    """Ensure Playwright browsers are installed and ready."""
     try:
-        from playwright.sync_api import sync_playwright
+        from playwright.async_api import async_playwright
         
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch()
-                browser.close()
+        # Test if browser is available
+        async with async_playwright() as p:
+            try:
+                browser = await p.chromium.launch(headless=True)
+                await browser.close()
                 return True
-        except Exception:
-            console.print("[yellow]Installing Playwright browsers...[/yellow]")
-            result = subprocess.run([sys.executable, '-m', 'playwright', 'install'], 
-                                 capture_output=True, 
-                                 text=True)
-            if result.returncode != 0:
-                console.print(f"[red]Failed to install browsers: {result.stderr}[/red]")
-                return False
-            return True
+            except Exception as e:
+                console.print(f"[yellow]Playwright browser not found: {e}[/yellow]")
+                console.print("[blue]Installing Playwright browsers...[/blue]")
+                
+                import subprocess
+                result = subprocess.run([
+                    sys.executable, '-m', 'playwright', 'install', 'chromium'
+                ], capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    console.print("[green]✓ Playwright browsers installed successfully[/green]")
+                    return True
+                else:
+                    console.print(f"[red]✗ Failed to install browsers: {result.stderr}[/red]")
+                    return False
+                    
     except ImportError:
-        console.print("[red]Playwright not found in environment[/red]")
+        console.print("[red]✗ Playwright not installed[/red]")
+        return False
+    except Exception as e:
+        console.print(f"[red]✗ Playwright setup error: {e}[/red]")
         return False
 
-def write_to_file(content: bytes, file_path: Path) -> None:
-    """Write binary content to a file."""
-    file_path.write_bytes(content)
-    logger.info("Written file: %s", file_path)
 
-def write_text_to_file(text: str, file_path: Path) -> None:
-    """Write text content to a file."""
-    file_path.write_text(text)
-    logger.info("Written text file: %s", file_path)
-
-class CustomJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle non-serializable objects."""
-    def default(self, obj):
-        # Convert any object to a dict of its public attributes
-        try:
-            return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
-        except AttributeError:
-            try:
-                return str(obj)
-            except Exception:
-                return None
-
-def truncate_large_strings(obj, max_length=1000):
-    """Recursively truncate large strings in nested structures."""
-    if isinstance(obj, str):
-        return obj if len(obj) <= max_length else obj[:max_length] + "... (truncated)"
-    elif isinstance(obj, dict):
-        return {k: truncate_large_strings(v, max_length) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [truncate_large_strings(x, max_length) for x in obj]
-    return obj
-
-def process_results(result: Dict[str, Any], task_id: str, url: str, output_dir: Path, options: Dict[str, Any]) -> None:
-    """Process and output the crawl result with enhanced error handling."""
-    # Print raw result keys
-    print("\n[yellow]Raw Result Keys:[/yellow]")
-    print(json.dumps(list(result.keys()), indent=2))
-
-    # Print structure instead of full raw result
-    print("\n[yellow]Result Structure:[/yellow]")
-    def print_structure(d, level=0):
-        for k, v in d.items():
-            indent = "  " * level
-            if hasattr(v, '__dict__'):
-                print(f"{indent}{k}: {v.__class__.__name__} object")
-                if level < 2:  # Limit nesting depth
-                    print_structure(v.__dict__, level + 1)
-            elif isinstance(v, dict):
-                print(f"{indent}{k}: dict with {len(v)} keys")
-                if level < 2:  # Limit nesting depth
-                    print_structure(v, level + 1)
-            elif isinstance(v, list):
-                print(f"{indent}{k}: list with {len(v)} items")
-            elif isinstance(v, str):
-                preview = v[:50] + "..." if len(v) > 50 else v
-                print(f"{indent}{k}: string ({len(v)} chars) - {preview}")
-            else:
-                print(f"{indent}{k}: {type(v).__name__}")
-    
-    print_structure(result)
-    print("\n")
-
-    # Only print full raw result if explicitly requested
-    if options.get("debug"):
-        print("\n[yellow]Full Raw Result (truncated):[/yellow]")
-        try:
-            # Truncate large strings and limit the output
-            truncated_result = truncate_large_strings(result)
-            print(json.dumps(truncated_result, indent=2, cls=CustomJSONEncoder))
-        except Exception as e:
-            print(f"[red]Error serializing full result: {e}[/red]")
-            print({k: f"{type(v).__name__} ({len(str(v))} chars)" if isinstance(v, (str, bytes)) 
-                   else type(v).__name__ for k, v in result.items()})
-
-    # Extract markdown with debug logging
-    
-    markdown_data = result.get("markdown", "")
-    if hasattr(markdown_data, 'text'):  # Handle MarkdownGenerationResult object
-        markdown_data = markdown_data.text
-    logger.debug("Markdown data type: %s", type(markdown_data))
-    logger.debug("Markdown content: %s", markdown_data)
-    
-    markdown = markdown_data if isinstance(markdown_data, str) else json.dumps(markdown_data, indent=2)
-    
-    print("[green]Markdown Result:[/green]")
-    try:
-        print(Markdown(markdown))
-        print("\n[blue]Rendered Markdown:[/blue]")
-    except Exception as e:
-        logger.error("Error rendering markdown: %s", e)
-        print("[red]Error rendering markdown, falling back to plain text:[/red]")
-        print(markdown)
-
-    if options.get("links"):
-        internal_links = result.get("links", {}).get("internal", [])
-        external_links = result.get("links", {}).get("external", [])
-        if internal_links or external_links:
-            print("\n[blue]Found Links:[/blue]")
-            print(f"[cyan]Internal Links: {len(internal_links)}[/cyan]")
-            for link in internal_links:
-                if isinstance(link, dict):
-                    print(f"  • {link.get('href', 'N/A')} - {link.get('text', 'No text')}")
-                else:
-                    print(f"  • {link}")
-                    
-            print(f"\n[yellow]External Links: {len(external_links)}[/yellow]")
-            for link in external_links:
-                if isinstance(link, dict):
-                    print(f"  • {link.get('href', 'N/A')} - {link.get('text', 'No text')}")
-                else:
-                    print(f"  • {link}")
-            
-            # Save links as CSV
-            csv_file = output_dir / f"links_{task_id}.csv"
-            with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                # Write header
-                writer.writerow(['type', 'url', 'text', 'domain'])
-                
-                # Write internal links
-                for link in internal_links:
-                    if isinstance(link, dict):
-                        writer.writerow(['internal', 
-                                      link.get('href', 'N/A'),
-                                      link.get('text', 'No text'),
-                                      link.get('base_domain', '')])
-                    else:
-                        writer.writerow(['internal', link, '', ''])
-                
-                # Write external links
-                for link in external_links:
-                    if isinstance(link, dict):
-                        writer.writerow(['external',
-                                      link.get('href', 'N/A'),
-                                      link.get('text', 'No text'),
-                                      link.get('base_domain', '')])
-                    else:
-                        writer.writerow(['external', link, '', ''])
-            
-            print(f"[green]Links saved to: {csv_file}[/green]")
-
-    # Fix screenshot handling
-    if options.get("screenshot") and "screenshot" in result:  # Changed from result.get("result", {})
-        screenshot_file = output_dir / f"screenshot_{task_id}.png"
-        try:
-            screenshot_data = base64.b64decode(result["screenshot"])  # Direct access to screenshot
-            write_to_file(screenshot_data, screenshot_file)
-            print(f"[green]Screenshot saved to: {screenshot_file}[/green]")
-        except Exception as e:
-            print(f"[red]Error saving screenshot: {e}[/red]")
-            logger.exception("Screenshot save failed")
-
-    if options.get("write_file") and markdown:
-        markdown_file = output_dir / f"crawl_results_{task_id}.md"
-        write_text_to_file(markdown, markdown_file)
-        print(f"[green]Markdown saved to: {markdown_file}[/green]")
-
-    # Fix alldata output
-    if options.get("alldata"):
-        json_file = output_dir / f"full_results_{task_id}.json"
-        try:
-            # Create a clean copy of the result without any circular references
-            clean_result = {
-                "url": result.get("url"),
-                "html": truncate_large_strings(result.get("html"), 10000),
-                "success": result.get("success"),
-                "cleaned_html": truncate_large_strings(result.get("cleaned_html"), 10000),
-                "media": result.get("media"),
-                "links": result.get("links"),
-                "downloaded_files": result.get("downloaded_files"),
-                "screenshot": "<base64_data>" if result.get("screenshot") else None,
-                "pdf": result.get("pdf"),
-                "markdown": result.get("markdown"),
-                "markdown_v2": result.get("markdown_v2"),
-                "metadata": result.get("metadata"),
-                "response_headers": result.get("response_headers"),
-                "status_code": result.get("status_code"),
-                "redirected_url": result.get("redirected_url")
-            }
-            write_text_to_file(json.dumps(clean_result, indent=2, cls=CustomJSONEncoder), json_file)
-            print(f"[green]Full results saved to: {json_file}[/green]")
-        except Exception as e:
-            print(f"[red]Error saving full results: {e}[/red]")
-            logger.exception("Full results save failed")
-
-    print("[green]Crawl successful![/green]")
-
-def create_output_dir(base_dir: Path, url: str) -> Path:
-    """Create a timestamped output directory for the crawl."""
+def create_output_directory(config: CrawlConfig) -> Path:
+    """Create a timestamped output directory for crawl results."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Extract just the domain name from the URL
-    clean_url = url.split("//")[-1].split("/")[0]
-    # Remove www. if present
-    clean_url = clean_url.replace("www.", "")
-    # Get the main domain part
-    domain = clean_url.split(".")[0]
+    # Extract domain from URL for directory naming
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(config.url)
+        domain = parsed.netloc.replace('www.', '').split('.')[0]
+    except Exception:
+        domain = "crawl"
     
-    # Create final directory name with timestamp and short domain
-    output_dir = base_dir / f"crawl_{domain}_{timestamp}"
+    output_dir = config.output_dir / f"{domain}_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    
     return output_dir
+
+
+def save_results(result: CrawlResult, output_dir: Path, config: CrawlConfig) -> None:
+    """Save crawl results to files with proper error handling."""
+    try:
+        # Save JSON result
+        json_file = output_dir / "result.json"
+        with open(json_file, 'w', encoding='utf-8') as f:
+            # Convert to dict and handle serialization
+            result_dict = result.model_dump(mode='json', exclude_none=True)
+            # Truncate large strings for JSON
+            for key in ['html', 'cleaned_html']:
+                if result_dict.get(key) and len(result_dict[key]) > 50000:
+                    result_dict[key] = result_dict[key][:50000] + "... (truncated)"
+            
+            json.dump(result_dict, f, indent=2, ensure_ascii=False, default=str)
+        
+        console.print(f"[green]✓ Results saved to: {json_file}[/green]")
+        
+        # Save individual files if requested
+        if config.write_files and result.success:
+            if result.markdown:
+                md_file = output_dir / "content.md"
+                md_file.write_text(result.markdown, encoding='utf-8')
+                console.print(f"[green]✓ Markdown saved to: {md_file}[/green]")
+            
+            if result.html:
+                html_file = output_dir / "content.html"
+                html_file.write_text(result.html, encoding='utf-8')
+                console.print(f"[green]✓ HTML saved to: {html_file}[/green]")
+            
+            if result.screenshot:
+                try:
+                    screenshot_file = output_dir / "screenshot.png"
+                    screenshot_data = base64.b64decode(result.screenshot)
+                    screenshot_file.write_bytes(screenshot_data)
+                    console.print(f"[green]✓ Screenshot saved to: {screenshot_file}[/green]")
+                except Exception as e:
+                    logger.warning(f"Failed to save screenshot: {e}")
+                    
+    except Exception as e:
+        console.print(f"[red]✗ Error saving results: {e}[/red]")
+
+
+def display_results(result: CrawlResult, config: CrawlConfig) -> None:
+    """Display crawl results in a rich, formatted manner."""
+    
+    # Create status panel
+    status_color = "green" if result.success else "red"
+    status_text = "✓ Success" if result.success else "✗ Failed"
+    
+    status_panel = Panel(
+        f"[{status_color}]{status_text}[/{status_color}]\n"
+        f"URL: {result.url}\n"
+        f"Status Code: {result.status_code or 'N/A'}\n"
+        f"Timestamp: {result.timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
+        title="Crawl Status",
+        border_style=status_color
+    )
+    console.print(status_panel)
+    
+    if not result.success:
+        if result.error:
+            console.print(f"[red]Error: {result.error}[/red]")
+        return
+    
+    # Create results table
+    table = Table(title="Crawl Results Summary", show_header=True)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="white")
+    
+    if result.html:
+        table.add_row("HTML Length", f"{len(result.html):,} characters")
+    if result.markdown:
+        table.add_row("Markdown Length", f"{len(result.markdown):,} characters")
+    if result.links:
+        table.add_row("Links Found", str(len(result.links)))
+    if result.media:
+        table.add_row("Media Items", str(len(result.media.get('images', []))))
+    if result.screenshot:
+        table.add_row("Screenshot", "✓ Captured")
+    
+    console.print(table)
+    
+    # Display markdown preview if available and not too long
+    if result.markdown and len(result.markdown) < 2000:
+        console.print("\n" + "="*50)
+        console.print("[bold cyan]Markdown Preview:[/bold cyan]")
+        console.print("="*50)
+        md = Markdown(result.markdown[:1500] + ("..." if len(result.markdown) > 1500 else ""))
+        console.print(md)
+    elif result.markdown:
+        console.print(f"\n[dim]Markdown content available ({len(result.markdown):,} chars) - saved to file[/dim]")
+    
+    # Show debug info if requested
+    if config.include_debug and result.metadata:
+        console.print(f"\n[dim]Metadata: {json.dumps(result.metadata, indent=2, default=str)[:500]}...[/dim]")
+
+
+async def perform_crawl(config: CrawlConfig) -> CrawlResult:
+    """Perform the actual web crawling operation."""
+    try:
+        # Dynamic import to handle missing dependencies gracefully
+        from crawl4ai import AsyncWebCrawler
+        
+        # Configure crawler parameters based on version
+        crawler_kwargs = {
+            'browser_type': config.browser_type,
+            'headless': config.headless,
+            'verbose': config.include_debug
+        }
+        
+        # Configure crawl parameters
+        crawl_kwargs = {
+            'screenshot': config.screenshot,
+            'wait_for_images': config.wait_for_images,
+        }
+        
+        if hasattr(AsyncWebCrawler, 'extract_links'):
+            crawler_kwargs['extract_links'] = config.extract_links
+        
+        # Add version-specific parameters
+        if config.screenshot and config.screenshot_wait_for > 0:
+            crawl_kwargs['screenshot_wait_for'] = config.screenshot_wait_for
+        
+        async with AsyncWebCrawler(**crawler_kwargs) as crawler:
+            # Perform the crawl
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True
+            ) as progress:
+                task = progress.add_task(f"Crawling {config.url}...", total=None)
+                
+                result = await crawler.arun(config.url, **crawl_kwargs)
+                
+                progress.update(task, description=f"✓ Crawled {config.url}")
+            
+            # Convert to our result model
+            crawl_result = CrawlResult(
+                success=getattr(result, 'success', True),
+                url=getattr(result, 'url', config.url),
+                status_code=getattr(result, 'status_code', None),
+                html=getattr(result, 'html', None),
+                markdown=getattr(result, 'markdown', None),
+                cleaned_html=getattr(result, 'cleaned_html', None),
+                links=getattr(result, 'links', None),
+                media=getattr(result, 'media', None),
+                metadata=getattr(result, 'metadata', None),
+                screenshot=getattr(result, 'screenshot', None),
+            )
+            
+            return crawl_result
+            
+    except ImportError as e:
+        return CrawlResult(
+            success=False,
+            url=config.url,
+            error=f"Crawl4AI import error: {e}. Please install crawl4ai: pip install crawl4ai"
+        )
+    except Exception as e:
+        return CrawlResult(
+            success=False,
+            url=config.url,
+            error=str(e)
+        )
+
 
 @app.command()
 def crawl(
-    url: str = typer.Argument(..., help="URL to crawl"),
-    write_file: bool = typer.Option(False, "--write", "-w", help="Write markdown results to a file"),
-    screenshot: bool = typer.Option(False, "--screenshot/--no-screenshot", help="Enable screenshot capture"),
-    screenshot_wait_for: float = typer.Option(2.0, "--screenshot-wait-for", help="Wait time for screenshot"),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o", help="Base output directory for files"),
-    browser: str = typer.Option("chromium", "--browser", "-b", help="Browser type: chromium, firefox, or webkit"),
-    wait_for_images: bool = typer.Option(False, "--wait-for-images", help="Wait for images to fully load"),
-    links: bool = typer.Option(False, "--links", help="Extract links from the page"),
-    alldata: bool = typer.Option(False, "--alldata", help="Output full JSON result"),
-    headless: bool = typer.Option(True, "--headless/--no-headless", help="Run browser in headless mode"),
-    debug: bool = typer.Option(False, "--debug", help="Print full raw result (truncated)"),
-    magic: bool = typer.Option(False, "--magic", help="Enables Magic Browser Mode!.")
+    url: str = typer.Argument(..., help="🔗 URL to crawl"),
+    
+    # Output options
+    write_files: bool = typer.Option(
+        False, "--write", "-w", 
+        help="💾 Write results to individual files (markdown, html, etc.)"
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None, "--output-dir", "-o", 
+        help="📁 Base output directory for results"
+    ),
+    
+    # Browser options  
+    browser: str = typer.Option(
+        "chromium", "--browser", "-b",
+        help="🌐 Browser type (chromium, firefox, webkit)"
+    ),
+    headless: bool = typer.Option(
+        True, "--headless/--no-headless",
+        help="👁️ Run browser in headless mode"
+    ),
+    
+    # Capture options
+    screenshot: bool = typer.Option(
+        False, "--screenshot/--no-screenshot",
+        help="📸 Capture page screenshot"
+    ),
+    screenshot_wait_for: float = typer.Option(
+        2.0, "--screenshot-wait-for",
+        help="⏱️ Wait time before taking screenshot (seconds)"
+    ),
+    wait_for_images: bool = typer.Option(
+        False, "--wait-for-images",
+        help="🖼️ Wait for images to load before processing"
+    ),
+    
+    # Content options
+    links: bool = typer.Option(
+        False, "--links",
+        help="🔗 Extract and include page links"
+    ),
+    magic: bool = typer.Option(
+        False, "--magic",
+        help="✨ Enable magic mode for enhanced content extraction"
+    ),
+    
+    # Debug options
+    debug: bool = typer.Option(
+        False, "--debug",
+        help="🔍 Include debug information and verbose logging"
+    ),
 ):
     """
-    Crawl the given URL using the Crawl4AI Python API.
-    """
-    if not ensure_playwright_browsers():
-        raise typer.Exit(1)
-        
-    # Create base output directory if not specified
-    base_dir = output_dir or Path.cwd() / "crawl_outputs"
-    base_dir.mkdir(parents=True, exist_ok=True)
+    🕷️ **Modern Web Scraping Tool** 
     
-    # Create timestamped directory for this crawl
-    crawl_dir = create_output_dir(base_dir, url)
-    console.print(f"[cyan]Output directory: {crawl_dir}[/cyan]")
-
-    async def run_crawl() -> Tuple[Dict[str, Any], str]:
-        browser_config = BrowserConfig(
-            browser_type=browser,
-            headless=headless
-        )
-        run_config = CrawlerRunConfig(
-            screenshot=screenshot,
-            screenshot_wait_for=screenshot_wait_for,
-            wait_for_images=wait_for_images,
-            verbose=True,
-            magic = magic
-        )
-        async with AsyncWebCrawler(config=browser_config,extract_links=links) as crawler:
-            result = await crawler.arun(url, config=run_config)
-            # Convert CrawlResult to dict more safely
-            result_dict = {
-                k: v.__dict__ if hasattr(v, '__dict__') else v 
-                for k, v in result.__dict__.items()
-            }
-            # Ensure links are properly captured
-            if hasattr(result, 'links'):
-                result_dict['links'] = result.links
-            return result_dict, "local"
-
-    options = {
-        "write_file": write_file,
-        "screenshot": screenshot,
-        "alldata": alldata,
-        "links": links,
-        "debug": debug,
-    }
-
+    Crawl web pages using the latest Crawl4AI technology with enhanced error handling,
+    beautiful output formatting, and comprehensive result saving.
+    
+    **Examples:**
+    
+    • Basic crawl: `scrapecrawl https://example.com`
+    
+    • With screenshot: `scrapecrawl https://example.com --screenshot --write`
+    
+    • Full extraction: `scrapecrawl https://example.com --links --magic --write --debug`
+    """
+    
+    # Configure logging level
+    if debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug mode enabled")
+    
+    # Create configuration
+    config = CrawlConfig(
+        url=url,
+        browser_type=browser,
+        headless=headless,
+        screenshot=screenshot,
+        screenshot_wait_for=screenshot_wait_for,
+        wait_for_images=wait_for_images,
+        extract_links=links,
+        magic_mode=magic,
+        output_dir=output_dir,
+        write_files=write_files,
+        include_debug=debug,
+    )
+    
+    console.print(Panel(f"🚀 Starting crawl of [bold blue]{url}[/bold blue]", 
+                       title="Crawl4AI Modern Scraper"))
+    
+    async def main():
+        # Ensure Playwright is set up
+        if not await ensure_playwright_setup():
+            console.print("[red]✗ Cannot proceed without Playwright setup[/red]")
+            raise typer.Exit(1)
+        
+        # Create output directory
+        output_dir = create_output_directory(config)
+        console.print(f"📁 Output directory: [blue]{output_dir}[/blue]")
+        
+        # Perform crawl
+        result = await perform_crawl(config)
+        
+        # Display results
+        display_results(result, config)
+        
+        # Save results
+        save_results(result, output_dir, config)
+        
+        if result.success:
+            console.print(f"\n🎉 [green]Crawl completed successfully![/green]")
+        else:
+            console.print(f"\n💥 [red]Crawl failed. Check the error messages above.[/red]")
+            raise typer.Exit(1)
+    
     try:
-        console.print(f"[cyan]Crawling URL: {url}[/cyan]")
-        result, task_id = asyncio.run(run_crawl())
-        process_results(result, task_id, url, crawl_dir, options)
-    except Exception as e:
-        console.print(f"[red]Error during crawl: {e}[/red]")
-        logger.exception("Crawl failed")
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        console.print("\n⏹️ [yellow]Crawl interrupted by user[/yellow]")
         raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"\n💥 [red]Unexpected error: {e}[/red]")
+        if debug:
+            console.print_exception()
+        raise typer.Exit(1)
+
+
+@app.command()
+def version():
+    """📋 Show version information for all dependencies."""
+    
+    versions_table = Table(title="📦 Dependency Versions", show_header=True)
+    versions_table.add_column("Package", style="cyan")
+    versions_table.add_column("Version", style="white")
+    versions_table.add_column("Status", style="green")
+    
+    packages = [
+        ("typer", "typer"),
+        ("rich", "rich"),
+        ("crawl4ai", "crawl4ai"),
+        ("playwright", "playwright"),
+        ("aiohttp", "aiohttp"),
+        ("pydantic", "pydantic")
+    ]
+    
+    for display_name, import_name in packages:
+        try:
+            module = __import__(import_name)
+            # Special handling for different version attributes
+            if hasattr(module, '__version__'):
+                version = module.__version__
+            elif hasattr(module, 'VERSION'):
+                version = module.VERSION
+            elif import_name == 'rich':
+                # Rich stores version differently
+                try:
+                    from rich import __version__ as rich_version
+                    version = rich_version
+                except:
+                    version = 'unknown'
+            else:
+                version = 'unknown'
+            status = "✓ Installed"
+        except ImportError:
+            version = "Not installed"
+            status = "✗ Missing"
+        
+        versions_table.add_row(display_name, version, status)
+    
+    console.print(versions_table)
+
 
 if __name__ == "__main__":
     app()
