@@ -103,61 +103,29 @@ source $ZSH/oh-my-zsh.sh
 #alias ls="colorls"
 #alias ll="colorls -al"
 #alias lt="colorls --tree=3"
-
-
+alias kc='kubectl config use-context'
+alias kcc='kubectl config current-context'
+alias pv='pigz'
+alias rk='rancher kubectl'
+alias rkubectl='rancher kubectl'
 conda_snapshot() {
-  local snapshot_dir="${1:-$HOME/conda_snapshots}"
-  mkdir -p "$snapshot_dir"
-  conda env list | grep -v "^#" | awk '{print $1}' | while read -r env; do
-    if [ ! -z "$env" ]; then
-      echo "📸 Taking snapshot of '$env' environment..."
-      conda list -n "$env" --explicit > "$snapshot_dir/$env.txt"
-      echo "🗃️ Snapshot saved to '$snapshot_dir/$env.txt'"
-    fi
-  done
-  echo "🌠 All Conda environment snapshots are saved in '$snapshot_dir'!"
+    local snapshot_dir="${1:-$HOME/conda_snapshots}"
+    mkdir -p "$snapshot_dir"
+    conda env list | grep -v "^#" | awk '{print $1}' | while read -r env; do
+        if [ -n "$env" ]; then
+            echo "📸 Taking snapshot of '$env' environment..."
+            conda list -n "$env" --explicit > "$snapshot_dir/$env.txt"
+            echo "🗃️ Snapshot saved to '$snapshot_dir/$env.txt'"
+        fi
+    done
 }
 
-
+# shell environment loader
+if [ -f "$HOME/.local/bin/env" ]; then
+    . "$HOME/.local/bin/env"
+fi
 
 conda_build_interactive() {
-  # Check if conda is installed
-  if ! command -v conda &> /dev/null; then
-    echo "🔍 Conda not found. Installing Miniconda..."
-    
-    # Detect OS
-    case "$(uname -s)" in
-      Linux*)
-        installer_url="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
-        ;;
-      Darwin*)
-        if [[ $(uname -m) == "arm64" ]]; then
-          installer_url="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh"
-        else
-          installer_url="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh"
-        fi
-        ;;
-      *)
-        echo "❌ Unsupported operating system"
-        return 1
-        ;;
-    esac
-
-    # Download and install Miniconda
-    wget "$installer_url" -O miniconda.sh || curl -o miniconda.sh "$installer_url"
-    bash miniconda.sh -b -p "$HOME/miniconda"
-    rm miniconda.sh
-
-    # Initialize conda for the current shell
-    eval "$("$HOME/miniconda/bin/conda" "shell.$(basename "$SHELL")" hook)"
-
-    # Add conda to PATH permanently
-    echo 'export PATH="$HOME/miniconda/bin:$PATH"' >> "$HOME/.$(basename "$SHELL")rc"
-    
-    echo "✅ Conda installed successfully!"
-  fi
-
-  # Existing conda_build_interactive function continues here
   echo "🔧 Let's build a new Conda environment."
   echo "Enter the name for your new environment: "
   read env_name
@@ -229,15 +197,18 @@ conda_destroy() {
       fi
     done
     echo "🌌 All non-base Conda environments have been annihilated! 🌠"
-  fi
+    fi
 }
 
-
-
+# shell environment loader
+if [ -f "$HOME/.local/bin/env" ]; then
+    . "$HOME/.local/bin/env"
+fi
 
 # APPLICATIONS
 #
 #
+
 compress() {
     # Prompt for directory to compress
     echo -n "Enter the directory to compress: "
@@ -405,20 +376,8 @@ cn() {
 
 
 
+export COMPOSE_BAKE=true
 
-
-crawl() {
-  if [ -f "$HOME/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py" ]; then
-    uv run "$HOME/yorko_io/all_the_docks/ai_flow/scrapeCrawl.py" "$@"
-  elif [ -f "$HOME/scrapeCrawl.py" ]; then
-    uv run "$HOME/scrapeCrawl.py" "$@"
-  elif [ -f "$HOME/.dotfiles/scripts/scrapeCrawl.py" ]; then
-    uv run "$HOME/.dotfiles/scripts/scrapeCrawl.py" "$@"
-  else
-    echo "Error: scrapeCrawl.py not found in $HOME/yorko_io/all_the_docks/ai_flow/, $HOME/, or $HOME/.dotfiles/scripts/"
-    return 1
-  fi
-}
 
 
 mischief_managed() {
@@ -479,8 +438,6 @@ reveal_mischief() {
     echo -e "\033[1;31m⚠️ No mischief logged yet!\033[0m"
   fi
 }
-
-
 
 
 # SMART NOTE CREATION FUNCTION for .zshrc
@@ -969,4 +926,10 @@ EOL
     fi
 }
 
-export COMPOSE_BAKE=true
+
+
+
+
+
+#export CLAUDE_CODE_USE_BEDROCK=1
+#export AWS_REGION=us-east-1  # or your preferred region
