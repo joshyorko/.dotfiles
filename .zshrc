@@ -210,51 +210,515 @@ fi
 #
 
 compress() {
-    # Prompt for directory to compress
-    echo -n "Enter the directory to compress: "
-    read directory
-    if [ ! -d "$directory" ]; then
+    setopt local_options no_aliases
+    # Advanced compression utility optimized for Universal Blue OS Bluefin (Homebrew-first)
+    # while maintaining full Ubuntu/Debian compatibility
+    #
+    # Usage: compress [options] [directory]
+    # Options:
+    #   -h, --help              Show this help message
+    #   -o, --output FILE       Output filename (default: timestamp_dirname.tar.EXT)
+    #   -a, --algorithm ALGO    Compression algorithm: zstd (default), pigz, gzip, xz, bzip2
+    #   -l, --level LEVEL       Compression level (algorithm-specific, e.g., 1-19 for zstd)
+    #   -e, --exclude PATTERN   Exclude pattern (can be used multiple times)
+    #   -p, --progress          Show progress bar (requires pv)
+    #   -d, --dry-run           Show what would be compressed without doing it
+    #   -i, --interactive       Interactive mode (prompts for inputs)
+    #   -v, --verbose           Verbose output
+    #   --no-install            Don't attempt to auto-install missing tools
+    #   --prefer-brew           Force Homebrew for package installation
+    #   --prefer-apt            Force apt for package installation
+
+    local directory=""
+    local output_file=""
+    local algorithm="zstd"
+    local compression_level=""
+    local exclude_patterns=()
+    local show_progress=0
+    local dry_run=0
+    local interactive=0
+    local verbose=0
+    local auto_install=1
+    local prefer_pkg_mgr=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                echo "compress - Advanced compression utility for directories"
+                echo ""
+                echo "Usage: compress [options] [directory]"
+                echo ""
+                echo "Options:"
+                echo "  -h, --help              Show this help message"
+                echo "  -o, --output FILE       Output filename (default: timestamp_dirname.tar.EXT)"
+                echo "  -a, --algorithm ALGO    Compression algorithm: zstd (default), pigz, gzip, xz, bzip2"
+                echo "  -l, --level LEVEL       Compression level (algorithm-specific)"
+                echo "  -e, --exclude PATTERN   Exclude pattern (can be used multiple times)"
+                echo "  -p, --progress          Show progress bar (requires pv)"
+                echo "  -d, --dry-run           Show what would be compressed without doing it"
+                echo "  -i, --interactive       Interactive mode (prompts for inputs)"
+                echo "  -v, --verbose           Verbose output"
+                echo "  --no-install            Don't attempt to auto-install missing tools"
+                echo "  --prefer-brew           Force Homebrew for package installation"
+                echo "  --prefer-apt            Force apt for package installation"
+                echo ""
+                echo "Examples:"
+                echo "  compress ~/Documents/project"
+                echo "  compress -a pigz -l 9 -p ~/large-directory"
+                echo "  compress -o backup.tar.zst -e '*.log' -e '.git' ~/myproject"
+                echo "  compress -i  # Interactive mode"
+                return 0
+                ;;
+            -o|--output)
+                output_file="$2"
+                shift 2
+                ;;
+            -a|--algorithm)
+                algorithm="$2"
+                shift 2
+                ;;
+            -l|--level)
+                compression_level="$2"
+                shift 2
+                ;;
+            -e|--exclude)
+                exclude_patterns+=("$2")
+                shift 2
+                ;;
+            -p|--progress)
+                show_progress=1
+                shift
+                ;;
+            -d|--dry-run)
+                dry_run=1
+                shift
+                ;;
+            -i|--interactive)
+                interactive=1
+                shift
+                ;;
+            -v|--verbose)
+                verbose=1
+                shift
+                ;;
+            --no-install)
+                auto_install=0
+                shift
+                ;;
+            --prefer-brew)
+                prefer_pkg_mgr="brew"
+                shift
+                ;;
+            --prefer-apt)
+                prefer_pkg_mgr="apt"
+                shift
+                ;;
+            -*)
+                echo "❌ Unknown option: $1"
+                echo "Use 'compress --help' for usage information"
+                return 1
+                ;;
+            *)
+                directory="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # Interactive mode
+    if [[ $interactive -eq 1 ]]; then
+        echo "🎯 Interactive Compression Mode"
+        echo ""
+        echo -n "Enter the directory to compress: "
+        read directory
+        
+        echo -n "Output filename (press Enter for auto-generated): "
+        read output_file
+        
+        echo "Select compression algorithm:"
+        echo "  1) zstd (recommended - fast & high ratio)"
+        echo "  2) pigz (parallel gzip - widely compatible)"
+        echo "  3) gzip (standard - maximum compatibility)"
+        echo "  4) xz (highest compression)"
+        echo "  5) bzip2 (good compression)"
+        echo -n "Choice [1]: "
+        read algo_choice
+        case "$algo_choice" in
+            2) algorithm="pigz" ;;
+            3) algorithm="gzip" ;;
+            4) algorithm="xz" ;;
+            5) algorithm="bzip2" ;;
+            *) algorithm="zstd" ;;
+        esac
+        
+        echo -n "Show progress bar? (y/N): "
+        read show_prog
+        [[ "$show_prog" =~ ^[Yy]$ ]] && show_progress=1
+    fi
+
+    # Validate directory
+    if [[ -z "$directory" ]]; then
+        echo "❌ Error: No directory specified"
+        echo "Use 'compress --help' for usage information"
+        return 1
+    fi
+    
+    if [[ ! -d "$directory" ]]; then
         echo "❌ Directory does not exist: $directory"
         return 1
     fi
 
-    # Prompt for backup name (optional)
-    echo -n "Enter a name for the backup (press Enter to use directory name): "
-    read backup_name
+    # Detect OS and package manager
+    local os_type=""
+    local pkg_manager=""
     
-    # Use directory name if no backup name provided
-    if [[ -z "$backup_name" ]]; then
-        backup_name=$(basename "$directory")
+    if [[ -f "/etc/os-release" ]]; then
+        source /etc/os-release
+        os_type="$ID"
+        [[ $verbose -eq 1 ]] && echo "🔍 Detected OS: $PRETTY_NAME"
     fi
     
-    # Create timestamp and final filename
-    timestamp=$(date '+%Y%m%d_%H%M%S')
-    tarball_name="${timestamp}_${backup_name}.tar.gz"
-    
-    # Determine compression program
-    if command -v pigz >/dev/null 2>&1; then
-        echo "✅ pigz found, using pigz for compression."
-        compressor="pigz"
-        compress_cmd=(--use-compress-program=pigz)
+    # Determine package manager preference
+    if [[ -n "$prefer_pkg_mgr" ]]; then
+        pkg_manager="$prefer_pkg_mgr"
+        [[ $verbose -eq 1 ]] && echo "🎯 Using preferred package manager: $pkg_manager"
+    elif command -v brew >/dev/null 2>&1; then
+        pkg_manager="brew"
+        [[ $verbose -eq 1 ]] && echo "🍺 Homebrew detected, using brew for package management"
+    elif [[ "$os_type" == "bluefin" ]] || [[ "$os_type" == "fedora" ]] || [[ "$VARIANT_ID" == "silverblue" ]]; then
+        # Universal Blue / Bluefin / Fedora Silverblue - prefer brew
+        if command -v rpm-ostree >/dev/null 2>&1; then
+            [[ $verbose -eq 1 ]] && echo "🌊 Bluefin/Universal Blue detected"
+            if ! command -v brew >/dev/null 2>&1 && [[ $auto_install -eq 1 ]]; then
+                echo "⚠️  Homebrew not found on immutable OS. Consider installing: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            fi
+        fi
+        pkg_manager="brew"
+    elif command -v apt-get >/dev/null 2>&1; then
+        pkg_manager="apt"
+        [[ $verbose -eq 1 ]] && echo "🐧 Using apt for package management"
+    elif command -v dnf >/dev/null 2>&1; then
+        pkg_manager="dnf"
+        [[ $verbose -eq 1 ]] && echo "🎩 Using dnf for package management"
+    elif command -v yum >/dev/null 2>&1; then
+        pkg_manager="yum"
+        [[ $verbose -eq 1 ]] && echo "📦 Using yum for package management"
     else
-        echo "⚠️  pigz not found, falling back to gzip."
-        compressor="gzip"
-        compress_cmd=(-z)
+        pkg_manager="unknown"
+        [[ $verbose -eq 1 ]] && echo "⚠️  No known package manager detected"
     fi
 
-    echo "📦 Compressing $directory into $tarball_name..."
+    # Function to install package
+    install_package() {
+        local pkg_name="$1"
+        local brew_name="${2:-$pkg_name}"
+        
+        if [[ $auto_install -eq 0 ]]; then
+            echo "⚠️  $pkg_name not found and auto-install is disabled"
+            return 1
+        fi
+        
+        echo "📥 Installing $pkg_name..."
+        
+        case "$pkg_manager" in
+            brew)
+                if command -v brew >/dev/null 2>&1; then
+                    brew install "$brew_name"
+                else
+                    echo "❌ Homebrew not available"
+                    return 1
+                fi
+                ;;
+            apt)
+                sudo apt-get update -qq && sudo apt-get install -y "$pkg_name"
+                ;;
+            dnf)
+                sudo dnf install -y "$pkg_name"
+                ;;
+            yum)
+                sudo yum install -y "$pkg_name"
+                ;;
+            *)
+                echo "❌ Unable to install $pkg_name: unknown package manager"
+                return 1
+                ;;
+        esac
+    }
 
-    # Compress using tar with the appropriate compression method
-    tar -cf "$tarball_name" "${compress_cmd[@]}" "$directory" 2> /tmp/tar_errors.log
+    # Check and install compression tools
+    local compressor_cmd=""
+    local compressor_bin=""
+    local file_ext=""
+    
+    case "$algorithm" in
+        zstd)
+            compressor_bin="zstd"
+            file_ext="tar.zst"
+            if ! command -v zstd >/dev/null 2>&1; then
+                echo "⚠️  zstd not found"
+                install_package "zstd" "zstd" || {
+                    echo "⚠️  Falling back to pigz"
+                    algorithm="pigz"
+                    compressor_bin="pigz"
+                    file_ext="tar.gz"
+                }
+            fi
+            if [[ "$algorithm" == "zstd" ]]; then
+                local zstd_level="${compression_level:-3}"
+                compressor_cmd=(zstd "-${zstd_level}" -T0)
+                [[ $verbose -eq 1 ]] && echo "✅ Using zstd (level $zstd_level, multithreaded)"
+            elif [[ "$algorithm" == "pigz" ]]; then
+                # Handle fallback from zstd to pigz
+                if ! command -v pigz >/dev/null 2>&1; then
+                    echo "⚠️  pigz not found"
+                    install_package "pigz" "pigz" || {
+                        echo "⚠️  Falling back to gzip"
+                        algorithm="gzip"
+                        compressor_bin="gzip"
+                    }
+                fi
+                if [[ "$algorithm" == "pigz" ]]; then
+                    local pigz_level="${compression_level:-6}"
+                    compressor_cmd=(pigz "-${pigz_level}")
+                    [[ $verbose -eq 1 ]] && echo "✅ Using pigz (level $pigz_level, parallel gzip)"
+                elif [[ "$algorithm" == "gzip" ]]; then
+                    local gzip_level="${compression_level:-6}"
+                    compressor_cmd=(gzip "-${gzip_level}")
+                    [[ $verbose -eq 1 ]] && echo "✅ Using gzip (level $gzip_level)"
+                fi
+            fi
+            ;;
+        pigz)
+            compressor_bin="pigz"
+            file_ext="tar.gz"
+            if ! command -v pigz >/dev/null 2>&1; then
+                echo "⚠️  pigz not found"
+                install_package "pigz" "pigz" || {
+                    echo "⚠️  Falling back to gzip"
+                    algorithm="gzip"
+                    compressor_bin="gzip"
+                }
+            fi
+            if [[ "$algorithm" == "pigz" ]]; then
+                local pigz_level="${compression_level:-6}"
+                compressor_cmd=(pigz "-${pigz_level}")
+                [[ $verbose -eq 1 ]] && echo "✅ Using pigz (level $pigz_level, parallel gzip)"
+            elif [[ "$algorithm" == "gzip" ]]; then
+                local gzip_level="${compression_level:-6}"
+                compressor_cmd=(gzip "-${gzip_level}")
+                [[ $verbose -eq 1 ]] && echo "✅ Using gzip (level $gzip_level)"
+            fi
+            ;;
+        gzip)
+            compressor_bin="gzip"
+            file_ext="tar.gz"
+            local gzip_level="${compression_level:-6}"
+            compressor_cmd=(gzip "-${gzip_level}")
+            [[ $verbose -eq 1 ]] && echo "✅ Using gzip (level $gzip_level)"
+            ;;
+        xz)
+            compressor_bin="xz"
+            file_ext="tar.xz"
+            if ! command -v xz >/dev/null 2>&1; then
+                echo "⚠️  xz not found"
+                install_package "xz" "xz" || return 1
+            fi
+            local xz_level="${compression_level:-6}"
+            compressor_cmd=(xz "-${xz_level}" -T0)
+            [[ $verbose -eq 1 ]] && echo "✅ Using xz (level $xz_level, multithreaded)"
+            ;;
+        bzip2)
+            compressor_bin="bzip2"
+            file_ext="tar.bz2"
+            if ! command -v bzip2 >/dev/null 2>&1; then
+                echo "⚠️  bzip2 not found"
+                install_package "bzip2" "bzip2" || return 1
+            fi
+            local bzip2_level="${compression_level:-9}"
+            compressor_cmd=(bzip2 "-${bzip2_level}")
+            [[ $verbose -eq 1 ]] && echo "✅ Using bzip2 (level $bzip2_level)"
+            ;;
+        *)
+            echo "❌ Unknown compression algorithm: $algorithm"
+            return 1
+            ;;
+    esac
+
+    # Generate output filename
+    if [[ -z "$output_file" ]]; then
+        local dir_basename=$(basename "$directory")
+        output_file="$dir_basename"
+    fi
+    
+    # Ensure output has correct extension
+    if [[ ! "$output_file" =~ \.(tar\.(gz|zst|xz|bz2)|tgz)$ ]]; then
+        output_file="${output_file%.tar*}.${file_ext}"
+    fi
+
+    # Ensure output filename is prefixed with timestamp and unique identifier
+    local timestamp=$(date '+%Y%m%d_%H%M%S')
+    local unique_id=""
+    if command -v uuidgen >/dev/null 2>&1; then
+        unique_id=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -d '-' | cut -c1-8)
+    fi
+    if [[ -z "$unique_id" ]]; then
+        unique_id=$(LC_CTYPE=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | command head -c8)
+    fi
+    if [[ -z "$unique_id" ]]; then
+        unique_id=$(printf '%04x%04x' $RANDOM $RANDOM)
+    fi
+
+    local original_output="$output_file"
+    local output_dir=""
+    local output_basename="$output_file"
+    if [[ "$output_basename" == */* ]]; then
+        output_dir="${output_basename%/*}"
+        output_basename="${output_basename##*/}"
+        if [[ -z "$output_dir" && "$original_output" == /* ]]; then
+            output_dir="/"
+        fi
+    fi
+
+    local base_without_ext="$output_basename"
+    if [[ "$base_without_ext" == *.${file_ext} ]]; then
+        base_without_ext="${base_without_ext%.$file_ext}"
+    else
+        base_without_ext="${base_without_ext%.*}"
+    fi
+
+    if [[ -z "$base_without_ext" ]]; then
+        base_without_ext="backup"
+    fi
+
+    if [[ ! "$base_without_ext" =~ ^[0-9]{8}_[0-9]{6}_[[:alnum:]]{4,}_ ]]; then
+        base_without_ext="${timestamp}_${unique_id}_${base_without_ext}"
+    fi
+
+    local rebuilt_basename="${base_without_ext}.${file_ext}"
+    if [[ -n "$output_dir" ]]; then
+        case "$output_dir" in
+            /)
+                output_file="/${rebuilt_basename}"
+                ;;
+            .)
+                output_file="$rebuilt_basename"
+                ;;
+            *)
+                output_dir="${output_dir%/}"
+                output_file="${output_dir}/${rebuilt_basename}"
+                ;;
+        esac
+    else
+        output_file="$rebuilt_basename"
+    fi
+
+    # Check for pv if progress is requested
+    local pv_cmd=()
+    if [[ $show_progress -eq 1 ]]; then
+        local pv_path="$(builtin whence -p pv 2>/dev/null)"
+        if [[ -z "$pv_path" ]]; then
+            if [[ -n "${aliases[pv]+_}" ]]; then
+                [[ $verbose -eq 1 ]] && echo "⚠️  Ignoring pv alias (${aliases[pv]})"
+            fi
+            echo "⚠️  pv (pipe viewer) not found"
+            install_package "pv" "pv" || {
+                echo "⚠️  Continuing without progress bar"
+                show_progress=0
+            }
+            if [[ $show_progress -eq 1 ]]; then
+                pv_path="$(builtin whence -p pv 2>/dev/null)"
+            fi
+        fi
+
+        if [[ $show_progress -eq 1 ]] && [[ -n "$pv_path" ]]; then
+            pv_cmd=("$pv_path")
+        else
+            show_progress=0
+        fi
+    fi
+
+    # Build exclude arguments
+    local exclude_args=()
+    for pattern in "${exclude_patterns[@]}"; do
+        exclude_args+=(--exclude="$pattern")
+    done
+
+    # Dry run mode
+    if [[ $dry_run -eq 1 ]]; then
+        echo "🔍 Dry-run mode: showing what would be compressed"
+        echo ""
+        echo "  Source directory: $directory"
+        echo "  Output file:      $output_file"
+        echo "  Algorithm:        $algorithm (${compressor_cmd[*]})"
+        echo "  Exclude patterns: ${exclude_patterns[*]:-none}"
+        echo ""
+        echo "Files that would be included:"
+        tar -cf - "${exclude_args[@]}" "$directory" 2>/dev/null | tar -tv | head -50
+        local total_files=$(tar -cf - "${exclude_args[@]}" "$directory" 2>/dev/null | tar -tv | wc -l)
+        echo ""
+        echo "📊 Total: $total_files files/directories"
+        return 0
+    fi
+
+    # Perform compression
+    echo "📦 Compressing $directory → $output_file"
+    [[ ${#exclude_patterns[@]} -gt 0 ]] && echo "🚫 Excluding: ${exclude_patterns[*]}"
+    
+    local tar_opts=("-cf" "-")
+    [[ $verbose -eq 1 ]] && tar_opts+=("-v")
+    tar_opts+=("${exclude_args[@]}")
+    tar_opts+=("$directory")
+    
+    local error_log="/tmp/compress_errors_$$.log"
+    local tar_status=0
+    
+    if [[ $show_progress -eq 1 ]] && [[ ${#pv_cmd[@]} -gt 0 ]]; then
+        # Calculate directory size for progress
+        local dir_size=$(du -sb "$directory" 2>/dev/null | awk '{print $1}')
+        if [[ -n "$dir_size" ]]; then
+            tar "${tar_opts[@]}" 2>"$error_log" | "${pv_cmd[@]}" -s "$dir_size" -pterb | "${compressor_cmd[@]}" > "$output_file"
+            tar_status=${pipestatus[1]}
+        else
+            tar "${tar_opts[@]}" 2>"$error_log" | "${pv_cmd[@]}" -pterb | "${compressor_cmd[@]}" > "$output_file"
+            tar_status=${pipestatus[1]}
+        fi
+    else
+        tar "${tar_opts[@]}" 2>"$error_log" | "${compressor_cmd[@]}" > "$output_file"
+        tar_status=${pipestatus[1]}
+    fi
 
     # Check result
-    if [ $? -eq 0 ]; then
-        echo "✅ Directory compressed successfully into $tarball_name"
-        echo "📍 Full path: $(pwd)/$tarball_name"
+    if [[ $tar_status -eq 0 ]] && [[ -f "$output_file" ]]; then
+        local file_size=$(du -h "$output_file" | cut -f1)
+        echo "✅ Compression successful!"
+        echo "📍 Location: $(realpath "$output_file")"
+        echo "📊 Size: $file_size"
+        
+        # Calculate compression ratio if verbose
+        if [[ $verbose -eq 1 ]]; then
+            local orig_size=$(du -sb "$directory" 2>/dev/null | awk '{print $1}')
+            local comp_size=$(stat -f%z "$output_file" 2>/dev/null || stat -c%s "$output_file" 2>/dev/null)
+            if [[ -n "$orig_size" ]] && [[ -n "$comp_size" ]] && [[ $orig_size -gt 0 ]]; then
+                local ratio=$(echo "scale=1; 100 - ($comp_size * 100 / $orig_size)" | bc)
+                echo "💾 Compression ratio: ${ratio}%"
+            fi
+        fi
+        
+        [[ -f "$error_log" ]] && rm -f "$error_log"
+        return 0
     else
-        echo "❌ Compression failed. Check /tmp/tar_errors.log for details."
+        echo "❌ Compression failed"
+        if [[ -f "$error_log" ]] && [[ -s "$error_log" ]]; then
+            echo "📋 Error details:"
+            cat "$error_log"
+        fi
+        [[ -f "$error_log" ]] && rm -f "$error_log"
+        [[ -f "$output_file" ]] && rm -f "$output_file"
+        return 1
     fi
 }
+
 
 
 edir() {
